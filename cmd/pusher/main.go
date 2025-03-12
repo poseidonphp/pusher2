@@ -69,7 +69,7 @@ func main() {
 	})
 
 	router.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"message": "OK"})
+		c.JSON(200, gin.H{"status": "ok"})
 	})
 
 	// Run the web server in a goroutine
