@@ -89,8 +89,10 @@ func (s *StandaloneStorageManager) PurgeNodeData(nodeID constants.NodeID) error 
 
 func (s *StandaloneStorageManager) GetAllNodes() ([]string, error) {
 	nodeList := make([]string, len(s.listOfNodes))
+
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
+
 	for nodeID := range s.listOfNodes {
 		nodeList = append(nodeList, string(nodeID))
 	}
@@ -107,6 +109,7 @@ func (s *StandaloneStorageManager) SendNodeHeartbeat(nodeID constants.NodeID) {
 
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
+
 	for nID, lastHeartbeat := range s.listOfNodes {
 		if time.Now().Unix()-lastHeartbeat > int64(NodePingInterval.Seconds())+5 {
 			_ = s.RemoveNode(nID)
@@ -117,6 +120,7 @@ func (s *StandaloneStorageManager) SendNodeHeartbeat(nodeID constants.NodeID) {
 func (s *StandaloneStorageManager) AddChannel(channel constants.ChannelName) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
+
 	if _, ok := s.channelCounts[channel]; !ok {
 		s.channelCounts[channel] = make(map[constants.NodeID]int64)
 	}
@@ -126,6 +130,7 @@ func (s *StandaloneStorageManager) AddChannel(channel constants.ChannelName) err
 func (s *StandaloneStorageManager) RemoveChannel(channel constants.ChannelName) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
+
 	if _, ok := s.channelCounts[channel]; ok {
 		delete(s.channelCounts, channel)
 	}
@@ -134,20 +139,25 @@ func (s *StandaloneStorageManager) RemoveChannel(channel constants.ChannelName) 
 
 func (s *StandaloneStorageManager) Channels() []constants.ChannelName {
 	channelList := make([]constants.ChannelName, len(s.channelCounts)+len(s.presenceChannels))
+
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
+
 	for channel := range s.channelCounts {
 		channelList = append(channelList, channel)
 	}
+
 	for channel := range s.presenceChannels {
 		channelList = append(channelList, channel)
 	}
+
 	return channelList
 }
 
 func (s *StandaloneStorageManager) AdjustChannelCount(nodeID constants.NodeID, channelName constants.ChannelName, countToAdd int64) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
+
 	if _, ok := s.channelCounts[channelName]; !ok {
 		s.channelCounts[channelName][nodeID] = 0
 	}
@@ -157,6 +167,7 @@ func (s *StandaloneStorageManager) AdjustChannelCount(nodeID constants.NodeID, c
 
 func (s *StandaloneStorageManager) GetChannelCount(channelName constants.ChannelName) int64 {
 	runningCount := int64(0)
+
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
@@ -175,6 +186,7 @@ func (s *StandaloneStorageManager) GetChannelCount(channelName constants.Channel
 func (s *StandaloneStorageManager) AddUserToPresence(nodeID constants.NodeID, channelName constants.ChannelName, socketID constants.SocketID, memberData pusherClient.MemberData) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
+
 	if _, ok := s.presenceChannels[channelName]; !ok {
 		s.presenceChannels[channelName] = make(map[constants.NodeID]map[constants.SocketID]pusherClient.MemberData)
 	}
@@ -188,6 +200,7 @@ func (s *StandaloneStorageManager) AddUserToPresence(nodeID constants.NodeID, ch
 func (s *StandaloneStorageManager) RemoveUserFromPresence(nodeID constants.NodeID, channelName constants.ChannelName, socketID constants.SocketID) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
+
 	if _, ok := s.presenceChannels[channelName]; ok {
 		if _, ok := s.presenceChannels[channelName][nodeID]; ok {
 			delete(s.presenceChannels[channelName][nodeID], socketID)
@@ -202,8 +215,10 @@ func (s *StandaloneStorageManager) GetPresenceData(channelName constants.Channel
 		Hash:  map[string]map[string]string{},
 		IDs:   []string{},
 	}
+
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
+
 	usersSocketIDs := make([]constants.SocketID, 0)
 
 	// append the current user, since they are likely not in the list yet

@@ -463,7 +463,6 @@ func (h *Hub) removeSessionFromChannels(session *Session, channels ...constants.
 				SocketIDs:     userSocketIds,
 				SkipBroadcast: skipBroadcast,
 			})
-
 		} else {
 			_ = storage.Manager.AdjustChannelCount(h.nodeID, channel, -1)
 		}

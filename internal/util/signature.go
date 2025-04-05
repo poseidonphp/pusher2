@@ -60,6 +60,7 @@ func prepareQueryString(params url.Values) string {
 
 	sort.Strings(keys)
 	var pieces []string
+
 	for _, key := range keys {
 		pieces = append(pieces, key+"="+params.Get(key))
 	}

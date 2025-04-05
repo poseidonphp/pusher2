@@ -4,7 +4,6 @@ import (
 	pusherClient "github.com/pusher/pusher-http-go/v5"
 	"pusher/internal/constants"
 	"pusher/log"
-	"sync"
 )
 
 type StandAlonePubSubManager struct {
@@ -20,7 +19,7 @@ type StandAlonePubSubManager struct {
 	nodeList map[constants.NodeID]bool
 
 	// mutex for presenceChannels
-	mutex sync.RWMutex
+	//mutex sync.RWMutex
 }
 
 func (s *StandAlonePubSubManager) Init() error {

@@ -17,7 +17,9 @@ func Logger(logger *logrus.Logger) gin.HandlerFunc {
 		// other handler can change c.Path so:
 		path := c.Request.URL.Path
 		start := time.Now()
+
 		c.Next()
+
 		stop := time.Since(start)
 		latency := int(math.Ceil(float64(stop.Nanoseconds()) / 1000000.0))
 		statusCode := c.Writer.Status()
@@ -25,6 +27,7 @@ func Logger(logger *logrus.Logger) gin.HandlerFunc {
 		clientUserAgent := c.Request.UserAgent()
 		referer := c.Request.Referer()
 		dataLength := c.Writer.Size()
+
 		if dataLength < 0 {
 			dataLength = 0
 		}

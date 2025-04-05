@@ -42,7 +42,6 @@ func check() bool {
 }
 
 func createEncodedString() string {
-
 	secret := "SuperSecret"
 	strToEncode := SocketID + ":presence-users" + ":" + ChannelData
 	encodedString := hmacSignature(strToEncode, secret)
@@ -50,7 +49,6 @@ func createEncodedString() string {
 }
 
 func checkSignature(encodedString string) bool {
-
 	// reconstruct the string that should have been used to authorize, using data from the request
 	secret := "SuperSecret"
 	rawData := strings.Join([]string{SocketID, "presence-users", ChannelData}, ":")
