@@ -55,9 +55,9 @@ func main() {
 	{
 		backendGroup.POST("/:app_id/events", api.EventTrigger)
 		//backendGroup.POST("/:app_id/batch_events", api.BatchEventTrigger)
-		//backendGroup.GET("/:app_id/channels", api.ChannelIndex)
-		//backendGroup.GET("/:app_id/channels/:channel_name", api.ChannelShow)
-		//backendGroup.GET("/:app_id/channels/:channel_name/users", api.ChannelUsers)
+		backendGroup.GET("/:app_id/channels", api.ChannelIndex)
+		backendGroup.GET("/:app_id/channels/:channel_name", api.ChannelShow)
+		backendGroup.GET("/:app_id/channels/:channel_name/users", api.ChannelUsers)
 	}
 	router.GET("/app/:key", func(c *gin.Context) {
 		appKey := c.Param("key")

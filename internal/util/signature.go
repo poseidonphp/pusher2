@@ -23,6 +23,10 @@ func Verify(r *http.Request) (bool, error) {
 		return false, errors.New("invalid version")
 	}
 
+	//queryString := prepareQueryString(query)
+	//stringToSign := strings.Join([]string{strings.ToUpper(r.Method), r.URL.Path, queryString}, "\n")
+	//fmt.Println("String to sign: ", stringToSign)
+
 	timestamp, _ := Str2Int64(query.Get("auth_timestamp"))
 	if !checkTimestamp(timestamp, env.GetInt64("TIMESTAMP_GRACE", 600)) {
 		return false, errors.New("invalid timestamp")
@@ -32,7 +36,7 @@ func Verify(r *http.Request) (bool, error) {
 	query.Del("auth_signature")
 	queryString := prepareQueryString(query)
 	stringToSign := strings.Join([]string{strings.ToUpper(r.Method), r.URL.Path, queryString}, "\n")
-	return hmacSignature(stringToSign, env.GetString("APP_SECRET", "")) == signature, nil
+	return HmacSignature(stringToSign, env.GetString("APP_SECRET", "")) == signature, nil
 }
 
 func checkVersion(version string) bool {
@@ -63,14 +67,14 @@ func prepareQueryString(params url.Values) string {
 	return strings.Join(pieces, "&")
 }
 
-func hmacBytes(toSign, secret []byte) []byte {
+func HmacBytes(toSign, secret []byte) []byte {
 	_authSignature := hmac.New(sha256.New, secret)
 	_authSignature.Write(toSign)
 	return _authSignature.Sum(nil)
 }
 
-func hmacSignature(toSign, secret string) string {
-	return hex.EncodeToString(hmacBytes([]byte(toSign), []byte(secret)))
+func HmacSignature(toSign, secret string) string {
+	return hex.EncodeToString(HmacBytes([]byte(toSign), []byte(secret)))
 }
 
 //nolint:unused // not used yet

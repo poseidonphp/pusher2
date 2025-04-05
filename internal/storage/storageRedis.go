@@ -9,6 +9,7 @@ import (
 	"pusher/internal/payloads"
 	"pusher/internal/util"
 	"pusher/log"
+	"strings"
 	"time"
 )
 
@@ -16,6 +17,8 @@ type RedisStorage struct {
 	Client    redis.UniversalClient
 	KeyPrefix string
 }
+
+// *********** NON-INTERFAFCE METHODS ***********
 
 func (r *RedisStorage) getKey(key string) string {
 	if r.KeyPrefix == "" {
@@ -32,6 +35,7 @@ func (r *RedisStorage) channelListKey() string {
 	return r.getKey("hub:channels")
 }
 
+// returns the redis key for a presence channel (ie: <prefix>:channels:presence-<channel name>)
 func (r *RedisStorage) presenceChannelKey(channelName constants.ChannelName) string {
 	return r.getKey(fmt.Sprintf("channels:%s", channelName))
 }
@@ -39,6 +43,8 @@ func (r *RedisStorage) presenceChannelKey(channelName constants.ChannelName) str
 func (r *RedisStorage) channelCountKey(nodeID constants.NodeID) string {
 	return r.getKey(fmt.Sprintf("channel_counts:%s", nodeID))
 }
+
+// *********** INTERFACE-SPECIFIC METHODS ***********
 
 func (r *RedisStorage) AddNewNode(nodeID constants.NodeID) error {
 	log.Logger().Tracef("Adding new node %s", nodeID)
@@ -50,10 +56,6 @@ func (r *RedisStorage) AddNewNode(nodeID constants.NodeID) error {
 func (r *RedisStorage) RemoveNode(nodeID constants.NodeID) error {
 	r.Client.ZRem(r.nodeListKey(), string(nodeID))
 	return nil
-}
-
-func (r *RedisStorage) scanHKeys(channelKey string, match string) {
-
 }
 
 // PurgeNodeData removes a node from the list of nodes, and clears any channel data associated with the node.
@@ -82,6 +84,7 @@ func (r *RedisStorage) PurgeNodeData(nodeID constants.NodeID) error {
 				}
 				log.Logger().Tracef("   .................. Deleting hash key %s", nodeKey)
 				r.Client.HDel(channelKey, nodeKey)
+
 			}
 			if cursor == 0 || len(nodeKeys) == 0 {
 				break
@@ -140,32 +143,6 @@ func (r *RedisStorage) Channels() []constants.ChannelName {
 	return channels
 }
 
-func (r *RedisStorage) AddUserToPresence(nodeID constants.NodeID, channelName constants.ChannelName, socketID constants.SocketID, memberData pusherClient.MemberData) error {
-	/*
-		•	Key: presence:channels:{channelName}
-		•	Type: Hash
-		•	Members: node:{nodeId}:socket:{socketId} => {memberData}
-	*/
-	// HSET presence:channel:chat-room node:node1:socket:ABC '{"user_id":123,"name":"Alice"}'
-	channelKey := r.presenceChannelKey(channelName)
-	memberValue := fmt.Sprintf("node:%s:socket:%s", nodeID, socketID)
-	memberDataBytes, err := json.Marshal(memberData)
-	if err != nil {
-		log.Logger().Errorf("Error marshalling member data: %s", err)
-		return fmt.Errorf("error marshalling member data: %w", err)
-	}
-	r.Client.HSet(channelKey, memberValue, string(memberDataBytes))
-	// Note: we do not adjust the channel count for presence channels. When the count is needed, we just return the length of the hash.
-	return nil
-}
-
-func (r *RedisStorage) RemoveUserFromPresence(nodeID constants.NodeID, channelName constants.ChannelName, socketID constants.SocketID) error {
-	channelKey := r.presenceChannelKey(channelName)
-	memberValue := fmt.Sprintf("node:%s:socket:%s", nodeID, socketID)
-	r.Client.HDel(channelKey, memberValue)
-	return nil
-}
-
 func (r *RedisStorage) AdjustChannelCount(nodeID constants.NodeID, channelName constants.ChannelName, countToAdd int64) error {
 	/*
 		•	Key: presence:channel_counts:{nodeId}
@@ -175,76 +152,6 @@ func (r *RedisStorage) AdjustChannelCount(nodeID constants.NodeID, channelName c
 	channelCountKey := r.channelCountKey(nodeID)
 	r.Client.HIncrBy(channelCountKey, string(channelName), countToAdd)
 	return nil
-}
-
-// GetPresenceData returns the presence data for a given channel (list of users and their data).
-func (r *RedisStorage) GetPresenceData(channelName constants.ChannelName) ([]byte, error) {
-	_presenceData := payloads.PresenceData{
-		IDs:   []string{},
-		Hash:  map[string]map[string]string{},
-		Count: 0,
-	}
-
-	//nodes := r.Client.ZRange(r.nodeListKey(), 0, -1).Val()
-	//for _, node := range nodes {
-	//	members, err := r.Client.HGetAll(r.presenceChannelKey(constants.NodeID(node), channelName)).Result()
-	//	if err != nil {
-	//		log.Logger().Errorf("Error getting presence channel members: %s", err)
-	//		return nil, err
-	//	}
-	//	for _, member := range members {
-	//		var memberData pusherClient.MemberData
-	//		mErr := json.Unmarshal([]byte(member), &memberData)
-	//		if mErr != nil {
-	//			log.Logger().Errorf("Error unmarshalling member data: %s", mErr)
-	//			return nil, mErr
-	//		}
-	//		_presenceData.Hash[memberData.UserID] = memberData.UserInfo
-	//		_presenceData.IDs = append(_presenceData.IDs, memberData.UserID)
-	//	}
-	//}
-	//_presenceData.Count = len(_presenceData.IDs)
-
-	channelKey := r.presenceChannelKey(channelName)
-	members, err := r.Client.HGetAll(channelKey).Result()
-	if err != nil {
-		log.Logger().Errorf("Error getting presence channel members: %s", err)
-		return nil, err
-	}
-	for _, member := range members {
-		var memberData pusherClient.MemberData
-		mErr := json.Unmarshal([]byte(member), &memberData)
-		if mErr != nil {
-			log.Logger().Errorf("Error unmarshalling member data: %s", mErr)
-			return nil, mErr
-		}
-		_presenceData.Hash[memberData.UserID] = memberData.UserInfo
-		_presenceData.IDs = append(_presenceData.IDs, memberData.UserID)
-	}
-
-	_presenceData.Count = len(_presenceData.IDs)
-
-	presenceData, pErr := json.Marshal(map[string]payloads.PresenceData{"presence": _presenceData})
-	if pErr != nil {
-		log.Logger().Errorf("Error marshalling presence data: %s", pErr)
-		return nil, pErr
-	}
-	return presenceData, nil
-}
-
-func (r *RedisStorage) GetPresenceDataForSocket(nodeID constants.NodeID, channelName constants.ChannelName, socketID constants.SocketID) (*pusherClient.MemberData, error) {
-	channelKey := r.presenceChannelKey(channelName)
-	memberValue := fmt.Sprintf("node:%s:socket:%s", nodeID, socketID)
-	memberData, err := r.Client.HGet(channelKey, memberValue).Result()
-	if err != nil {
-		return nil, err
-	}
-	var member pusherClient.MemberData
-	mErr := json.Unmarshal([]byte(memberData), &member)
-	if mErr != nil {
-		return nil, mErr
-	}
-	return &member, nil
 }
 
 func (r *RedisStorage) GetChannelCount(channelName constants.ChannelName) int64 {
@@ -266,19 +173,97 @@ func (r *RedisStorage) GetChannelCount(channelName constants.ChannelName) int64 
 		runningCount += count
 	}
 	return runningCount
+}
 
-	//channelCountKey := r.channelCountKey(channelName)
-	////count, err := r.Client.HGet(channelCountKey, string(channelName)).Int64()
-	//nodes, err := r.Client.HGetAll(channelCountKey).Result()
-	//runningCount := 0
-	//for _, count := range nodes {
-	//	c, _ := strconv.Atoi(count)
-	//	runningCount += c
-	//}
-	//if err != nil {
-	//	return 0
-	//}
-	//return int64(runningCount)
+func (r *RedisStorage) AddUserToPresence(nodeID constants.NodeID, channelName constants.ChannelName, socketID constants.SocketID, memberData pusherClient.MemberData) error {
+	/*
+		•	Key: presence:channels:{channelName}
+		•	Type: Hash
+		•	Members: node:{nodeId}:socket:{socketId} => {memberData}
+	*/
+	// HSET presence:channel:chat-room node:node1:socket:ABC '{"user_id":123,"name":"Alice"}'
+	channelKey := r.presenceChannelKey(channelName)
+	//memberValue := fmt.Sprintf("node:%s:socket:%s", nodeID, socketID)
+	memberValue := fmt.Sprintf("node:%s:socket:%s", nodeID, socketID)
+	memberDataBytes, err := json.Marshal(memberData)
+	if err != nil {
+		log.Logger().Errorf("Error marshalling member data: %s", err)
+		return fmt.Errorf("error marshalling member data: %w", err)
+	}
+	r.Client.HSet(channelKey, memberValue, string(memberDataBytes))
+	// Note: we do not adjust the channel count for presence channels. When the count is needed, we just return the length of the hash.
+	return nil
+}
+
+func (r *RedisStorage) RemoveUserFromPresence(nodeID constants.NodeID, channelName constants.ChannelName, socketID constants.SocketID) error {
+	channelKey := r.presenceChannelKey(channelName)
+	memberValue := fmt.Sprintf("node:%s:socket:%s", nodeID, socketID)
+	r.Client.HDel(channelKey, memberValue)
+	return nil
+}
+
+// GetPresenceData returns the presence data for a given channel (list of users and their data).
+func (r *RedisStorage) GetPresenceData(channelName constants.ChannelName, currentUser pusherClient.MemberData) ([]byte, []constants.SocketID, error) {
+	_presenceData := payloads.PresenceData{
+		IDs:   []string{},
+		Hash:  map[string]map[string]string{},
+		Count: 0,
+	}
+
+	channelKey := r.presenceChannelKey(channelName)
+	members, err := r.Client.HGetAll(channelKey).Result()
+	usersSocketIDs := make([]constants.SocketID, 0)
+	if err != nil {
+		log.Logger().Errorf("Error getting presence channel members: %s", err)
+		return nil, usersSocketIDs, err
+	}
+
+	// append the current user, since they are likely not in the list yet
+	if currentUser.UserID != "" {
+		_presenceData.Hash[currentUser.UserID] = currentUser.UserInfo
+		_presenceData.IDs = append(_presenceData.IDs, currentUser.UserID)
+	}
+
+	for redisKey, member := range members {
+		var memberData pusherClient.MemberData
+		mErr := json.Unmarshal([]byte(member), &memberData)
+		if mErr != nil {
+			log.Logger().Errorf("Error unmarshalling member data: %s", mErr)
+			return nil, usersSocketIDs, mErr
+		}
+		if memberData.UserID == currentUser.UserID {
+			// get the last section of the redis key, as that is the socket id
+			parts := strings.Split(redisKey, ":")
+			socketId := parts[len(parts)-1]
+			usersSocketIDs = append(usersSocketIDs, constants.SocketID(socketId))
+		}
+		_presenceData.Hash[memberData.UserID] = memberData.UserInfo
+		_presenceData.IDs = append(_presenceData.IDs, memberData.UserID)
+	}
+
+	_presenceData.Count = len(_presenceData.IDs)
+
+	presenceData, pErr := json.Marshal(map[string]payloads.PresenceData{"presence": _presenceData})
+	if pErr != nil {
+		log.Logger().Errorf("Error marshalling presence data: %s", pErr)
+		return nil, usersSocketIDs, pErr
+	}
+	return presenceData, usersSocketIDs, nil
+}
+
+func (r *RedisStorage) GetPresenceDataForSocket(nodeID constants.NodeID, channelName constants.ChannelName, socketID constants.SocketID) (*pusherClient.MemberData, error) {
+	channelKey := r.presenceChannelKey(channelName)
+	memberValue := fmt.Sprintf("node:%s:socket:%s", nodeID, socketID)
+	memberData, err := r.Client.HGet(channelKey, memberValue).Result()
+	if err != nil {
+		return nil, err
+	}
+	var member pusherClient.MemberData
+	mErr := json.Unmarshal([]byte(memberData), &member)
+	if mErr != nil {
+		return nil, mErr
+	}
+	return &member, nil
 }
 
 func (r *RedisStorage) SocketDidHeartbeat(_ constants.NodeID, _ constants.SocketID, _ map[constants.ChannelName]constants.ChannelName) error {

@@ -85,7 +85,7 @@ func NewHub() *Hub {
 		cleanerPromotionChannel: make(chan pubsub.ServerMessage),
 	}
 
-	pubSubManagerDriver := env.GetString("PUBSUB_MANAGER", "none")
+	pubSubManagerDriver := env.GetString("PUBSUB_MANAGER", "local")
 	storageManagerDriver := env.GetString("STORAGE_MANAGER", "local")
 
 	var redisClient redis.UniversalClient
@@ -106,11 +106,16 @@ func NewHub() *Hub {
 	hub.initializeStorageManager(storageManagerDriver, redisClient)
 
 	GlobalHub = hub
+
+	// Register the node with the storage manager
 	nErr := storage.Manager.AddNewNode(hub.nodeID)
-	go hub.startCleaner()
 	if nErr != nil {
 		log.Logger().Fatal(nErr)
 	}
+
+	// Start the background cleaner process
+	go hub.startCleaner()
+
 	return hub
 }
 
@@ -138,7 +143,7 @@ func (h *Hub) initializePubSubManager(pubSubManagerDriver string, redisClient re
 		rPSM := &pubsub.RedisPubSubManager{Client: redisClient}
 		rPSM.SetKeyPrefix(env.GetString("REDIS_PREFIX", "pusher"))
 		pubsub.PubSubManager = rPSM
-	case "none":
+	case "local":
 		saPSM := &pubsub.StandAlonePubSubManager{}
 		_ = saPSM.Init()
 		pubsub.PubSubManager = saPSM
@@ -147,34 +152,7 @@ func (h *Hub) initializePubSubManager(pubSubManagerDriver string, redisClient re
 	}
 }
 
-func (h *Hub) Run() {
-	log.Logger().Infoln("Starting the hub")
-	// Start the heartbeat broadcast - this sends out its own heartbeat and checks for other nodes
-	go h.broadcastHeartbeat()
-
-	// Subscribe to the pubsub channel for server-to-server messages
-	go pubsub.PubSubManager.Subscribe(constants.SoketRushInternalChannel, h.server2server) // route incoming messages from pubsub to the server2server channel
-
-	// run a process to periodically free up space in the globalChannels, presenceChannels, and localChannels maps
-
-	// start listening for hub activity
-	for {
-		select {
-		case msg := <-h.server2server:
-			h.handleServerToServerIncoming(msg)
-		case session := <-h.register:
-			h.mutex.Lock()
-			h.sessions[session.socketID] = session
-			h.mutex.Unlock()
-		case session := <-h.unregister:
-			h.mutex.Lock()
-			delete(h.sessions, session.socketID)
-			h.mutex.Unlock()
-			// TODO: replace with cleanSession() logic
-		}
-	}
-}
-
+// startCleaner runs the background process to periodically clean up the globalChannels, presenceChannels, and localChannels maps from stale nodes
 func (h *Hub) startCleaner() {
 	interval := env.GetSeconds("CLEANER_INTERVAL", 60)
 	log.Logger().Infof("Starting the cleaner - running every %d seconds", interval)
@@ -201,6 +179,32 @@ func (h *Hub) startCleaner() {
 	}
 }
 
+func (h *Hub) Run() {
+	log.Logger().Infoln("Starting the hub")
+	// Start the heartbeat broadcast - this sends out its own heartbeat and checks for other nodes
+	go h.broadcastHeartbeat()
+
+	// Subscribe to the pubsub channel for server-to-server messages
+	go pubsub.PubSubManager.Subscribe(constants.SoketRushInternalChannel, h.server2server) // route incoming messages from pubsub to the server2server channel
+
+	// start listening for hub activity
+	for {
+		select {
+		case msg := <-h.server2server:
+			h.handleServerToServerIncoming(msg)
+		case session := <-h.register:
+			h.mutex.Lock()
+			h.sessions[session.socketID] = session
+			h.mutex.Unlock()
+		case session := <-h.unregister:
+			h.mutex.Lock()
+			delete(h.sessions, session.socketID)
+			h.mutex.Unlock()
+			// TODO: replace with cleanSession() logic
+		}
+	}
+}
+
 // function to send heartbeat to other nodes
 func (h *Hub) broadcastHeartbeat() {
 	log.Logger().Infof("Starting the node heartbeat broadcast; will broadcast every %d seconds", int(storage.NodePingInterval.Seconds()))
@@ -218,6 +222,7 @@ func (h *Hub) broadcastHeartbeat() {
 	}
 }
 
+// sendToOtherServers sends a ServerMessage to all other nodes in the cluster via pubsub
 func (h *Hub) sendToOtherServers(msg pubsub.ServerMessage) {
 	err := pubsub.PubSubManager.Publish(constants.SoketRushInternalChannel, msg)
 	if err != nil {
@@ -264,7 +269,7 @@ func (h *Hub) handleServerToServerIncoming(msg pubsub.ServerMessage) {
 
 // addPresenceUser adds the socket to the local connections list, adds the info to redis, and notifies other nodes
 func (h *Hub) addPresenceUser(socketID constants.SocketID, channel Channel, memberData pusherClient.MemberData) {
-	log.Logger().Traceln("Adding presence user to hub")
+	log.Logger().Tracef("[%s]  Adding presence user to hub\n", socketID)
 
 	localChannel := h.getOrCreateLocalChannel(channel.Name)
 
@@ -281,6 +286,13 @@ func (h *Hub) addPresenceUser(socketID constants.SocketID, channel Channel, memb
 	// add the user to the pubsub connection
 	_ = storage.Manager.AddUserToPresence(h.nodeID, channel.Name, socketID, memberData)
 
+	userSocketIds := storage.GetPresenceSocketsForUserID(channel.Name, memberData.UserID)
+	skipBroadcast := false
+	if len(userSocketIds) > 1 {
+		// if there are other sockets for this user, don't broadcast the message
+		skipBroadcast = true
+	}
+
 	channelEvent := ChannelEvent{
 		Event:   constants.PusherInternalPresenceMemberAdded,
 		Channel: channel.Name,
@@ -288,11 +300,12 @@ func (h *Hub) addPresenceUser(socketID constants.SocketID, channel Channel, memb
 	}
 
 	s2s := pubsub.ServerMessage{
-		NodeID: GlobalHub.nodeID,
-		Event:  constants.SocketRushEventChannelEvent,
-		//Event:    constants.SocketRushEventPresenceMemberAdded,
-		Payload:  channelEvent.ToJSON(),
-		SocketID: socketID,
+		NodeID:        GlobalHub.nodeID,
+		Event:         constants.SocketRushEventChannelEvent,
+		Payload:       channelEvent.ToJSON(),
+		SocketID:      socketID,
+		SocketIDs:     userSocketIds,
+		SkipBroadcast: skipBroadcast,
 	}
 
 	// send to all nodes for broadcast to all clients
@@ -407,13 +420,15 @@ func (h *Hub) removeSessionFromChannels(session *Session, channels ...constants.
 		//channelsToRemove = make([]constants.ChannelName, len(session.subscriptions))
 
 		for channel := range session.subscriptions {
-			log.Logger().Tracef("gracefully removing session from channel: %s", channel)
+			//log.Logger().Tracef("gracefully removing session from channel: %s", channel)
+			session.Tracef("gracefully removing session from channel: %s", channel)
 			channelsToRemove = append(channelsToRemove, channel)
 		}
 	}
 
 	for _, channel := range channelsToRemove {
-		log.Logger().Tracef("... ... ... removing session from channel: %s", channel)
+		session.Tracef("... ... ... removing session from channel: %s", channel)
+		//log.Logger().Tracef("... ... ... removing session from channel: %s", channel)
 		if h.localChannels[channel] != nil {
 			delete(h.localChannels[channel].Connections, session.socketID)
 		}
@@ -424,6 +439,13 @@ func (h *Hub) removeSessionFromChannels(session *Session, channels ...constants.
 				log.Logger().Errorf("Error getting presence data for socket: %v", gErr)
 				continue
 			}
+			userSocketIds := storage.GetPresenceSocketsForUserID(channel, presenceData.UserID)
+			skipBroadcast := false
+			if len(userSocketIds) > 1 {
+				// if there are other sockets for this user, don't broadcast the message
+				skipBroadcast = true
+			}
+
 			_ = storage.Manager.RemoveUserFromPresence(h.nodeID, channel, session.socketID)
 			// announce that the user has left the channel
 			mrd := &MemberRemovedData{UserID: presenceData.UserID}
@@ -436,8 +458,10 @@ func (h *Hub) removeSessionFromChannels(session *Session, channels ...constants.
 				NodeID: GlobalHub.nodeID,
 				Event:  constants.SocketRushEventChannelEvent,
 				//Event:    constants.SocketRushEventPresenceMemberRemoved,
-				Payload:  _msg.ToJSON(),
-				SocketID: session.socketID,
+				Payload:       _msg.ToJSON(),
+				SocketID:      session.socketID,
+				SocketIDs:     userSocketIds,
+				SkipBroadcast: skipBroadcast,
 			})
 
 		} else {
@@ -466,11 +490,15 @@ func (h *Hub) handleIncomingChannelEvent(message pubsub.ServerMessage) {
 		log.Logger().Errorf("Error unmarshalling channel event: %v", err)
 		return
 	}
+	if message.SkipBroadcast {
+		return
+	}
+	message.SocketIDs = append(message.SocketIDs, message.SocketID)
 
-	_ = h.publishChannelEventLocally(event)
+	_ = h.publishChannelEventLocally(event, message.SocketIDs...)
 }
 
-func (h *Hub) publishChannelEventLocally(event ChannelEvent) error {
+func (h *Hub) publishChannelEventLocally(event ChannelEvent, socketIDsToExclude ...constants.SocketID) error {
 	if event.Channel == "" {
 		return errors.New("channel name is required")
 	}
@@ -479,8 +507,14 @@ func (h *Hub) publishChannelEventLocally(event ChannelEvent) error {
 		return nil
 	}
 	e := event.ToJSON()
+
 	for socketID := range h.localChannels[event.Channel].Connections {
 		if session, ok := h.sessions[socketID]; ok {
+			// check if the socketID is in the socketIDsToExclude list
+			if ok := util.ListContains(socketIDsToExclude, socketID); ok {
+				continue
+			}
+
 			// check if the socketID is set and is the same as this event's socketID; if so, skip sending
 			if session.socketID != event.SocketID {
 				session.Send(e)
