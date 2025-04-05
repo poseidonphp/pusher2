@@ -3,6 +3,17 @@ please do! I would love to have some help on this project. Feel free to open an 
 
 Still in the development phase, though some basic functionality is there. 
 
+## Working (AFAIK)
+- [x] Basic presence channel support (join/leave)
+- [x] Basic channel support (subscribe/unsubscribe)
+- [x] Encrypted channel support
+- [x] Private/presence/encrypted channel authentication
+- [x] Client side events
+- [x] Channel APIs
+- [x] Redis pubsub support
+- [x] Redis storage support (including cleaning up stale records from crashed nodes)
+- [x] Multi-node support (via redis)
+
 ## TODO
 - [ ] Need to finish building the full in-memory storage as opposed to redis storage (still use redis pubsub)
 - [ ] Tests - so far i have 0 tests
