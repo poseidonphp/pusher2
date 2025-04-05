@@ -59,6 +59,7 @@ type ErrData struct {
 // ErrPack Channels -> Client
 func ErrPack(code util.ErrorCode) []byte {
 	data := ErrData{Message: util.ErrCodes[code], Code: code}
+
 	b, err := json.Marshal(data)
 	if err != nil {
 		panic(err)
@@ -74,6 +75,7 @@ type Pong struct {
 
 func PongPack() []byte {
 	data := Pong{Event: constants.PusherPong}
+
 	b, err := json.Marshal(data)
 	if err != nil {
 		panic(err)
@@ -118,6 +120,7 @@ type SubscriptionSucceeded struct {
 // SubscriptionSucceededPack ...
 func SubscriptionSucceededPack(channel constants.ChannelName, data string) []byte {
 	d := SubscriptionSucceeded{Event: constants.PusherInternalSubscriptionSucceeded, Channel: channel, Data: data}
+
 	b, err := json.Marshal(d)
 	if err != nil {
 		panic(err)
@@ -149,7 +152,7 @@ type ClientChannelEvent struct {
 func MarshalEventPack(payload any) []byte {
 	b, err := json.Marshal(payload)
 	if err != nil {
-		log.Logger().Errorf("Error marshalling event pack: ", err)
+		log.Logger().Errorf("Error marshalling event pack: %s", err.Error())
 		panic(err)
 	}
 	return b

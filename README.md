@@ -24,6 +24,7 @@ Still in the development phase, though some basic functionality is there.
 - [ ] App Manager (support multiple apps)
 - [ ] SNS support
 - [ ] Webhooks support
+- [ ] Benchmarking
 - [x] Implement additional channel routes (getting data like presence users, counts, etc)
 - [ ] More stuff i'm sure, will update as i think of it
 

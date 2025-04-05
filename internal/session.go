@@ -191,11 +191,14 @@ func (s *Session) handleUnsubscribeRequest(msgRaw []byte) *util.Error {
 
 	// Remove from session subscription list
 	s.mutex.Lock()
+
 	if !s.subscriptions[channel] {
 		s.mutex.Unlock()
 		return util.NewError(util.ErrCodeNotSubscribed)
 	}
+
 	delete(s.subscriptions, channel)
+
 	if _, ok := s.presenceChannels[channel]; ok {
 		delete(s.presenceChannels, channel)
 	}
@@ -365,9 +368,9 @@ func (s *Session) resetReadTimeout() {
 	}
 }
 
-func (s *Session) resetPongTimeout() {
-	_ = s.conn.SetReadDeadline(time.Now().Add(config.PongTimeout))
-}
+//func (s *Session) resetPongTimeout() {
+//	_ = s.conn.SetReadDeadline(time.Now().Add(config.PongTimeout))
+//}
 
 func (s *Session) closeConnection(errorCode util.ErrorCode) {
 	// if the client connection is still open, close it
@@ -401,6 +404,6 @@ func (s *Session) errorf(format string, args ...any) {
 	log.Logger().Errorf(fmt.Sprintf("[%s]  ", s.socketID)+format, args...)
 }
 
-func (s *Session) error(message string) {
-	log.Logger().Errorf("[%s]  %s", s.socketID, message)
-}
+//func (s *Session) error(message string) {
+//	log.Logger().Errorf("[%s]  %s", s.socketID, message)
+//}

@@ -87,18 +87,21 @@ func ValidateChannelAuth(authToken string, socketId constants.SocketID, channel 
 
 	key := authParts[0]
 	signature := authParts[1]
+
 	if key == "" {
 		return false
 	}
 
 	// Reconstruct the string that should have been used to authorize, using data from the request
 	reconstructedStringParts := []string{string(socketId), string(channel)}
+
 	if channelData != "" {
 		reconstructedStringParts = append(reconstructedStringParts, channelData)
 	}
 
 	reconstructedString := strings.Join(reconstructedStringParts, ":")
 	expected := HmacSignature(reconstructedString, env.GetString("APP_SECRET", ""))
+
 	return hmac.Equal([]byte(signature), []byte(expected))
 }
 

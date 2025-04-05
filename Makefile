@@ -17,6 +17,11 @@ ui:
 	fi
 	cd dev/ui && yarn && yarn dev
 
+
+.PHONY auth:
+auth:
+	cd dev/auth-server && go run main.go
+
 .PHONY build:
 build:
 	GOOS=darwin GOARCH=amd64 go build -mod=readonly -ldflags="-s -w" -o pusher-server-mac cmd/pusher/main.go

@@ -69,6 +69,7 @@ func UnmarshalPresenceData(presenceData []byte) (payloads.PresenceData, error) {
 	if err != nil {
 		return payloads.PresenceData{}, err
 	}
+
 	return data["presence"], nil
 }
 
@@ -77,7 +78,9 @@ func PresenceChannelUserIDs(channel constants.ChannelName) []string {
 	if err != nil {
 		return nil
 	}
+
 	var userIDs []string
+
 	unmarshalled, _ := UnmarshalPresenceData(subs)
 
 	for _, userID := range unmarshalled.IDs {

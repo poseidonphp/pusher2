@@ -25,6 +25,7 @@ func initLogger() {
 		// The TextFormatter is default, you don't actually have to do this.
 		logger.SetFormatter(&logrus.TextFormatter{})
 	}
+
 	logger.SetOutput(os.Stdout)
 	lvl, err := logrus.ParseLevel(env.GetString("LOG_LEVEL", "debug"))
 	if err != nil {
@@ -34,7 +35,6 @@ func initLogger() {
 		logger.Infoln("Log level:", lvl)
 		logger.SetLevel(lvl)
 	}
-
 }
 
 // Logger ...
