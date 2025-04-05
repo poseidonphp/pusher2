@@ -1,7 +1,6 @@
 package api
 
 import (
-	"fmt"
 	"github.com/gin-gonic/gin"
 	"net/http"
 	"pusher/internal/constants"
@@ -85,11 +84,10 @@ func ChannelUsers(c *gin.Context) {
 	}
 
 	_userIds := storage.PresenceChannelUserIDs(channel)
-	fmt.Println("User id length: " + fmt.Sprint(len(_userIds)))
 	userIds := make([]map[string]string, len(_userIds))
 	for index, id := range _userIds {
 		userIds[index] = map[string]string{"ID": id}
 	}
-	fmt.Println(userIds)
+
 	c.JSON(http.StatusOK, gin.H{"users": userIds})
 }
