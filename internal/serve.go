@@ -25,7 +25,7 @@ func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request, appKey, client, v
 	if appKey != env.GetString("APP_KEY", "") {
 		log.Logger().Error("Error app key", appKey)
 		_ = conn.SetWriteDeadline(time.Now().Add(time.Second))
-		_ = conn.WriteMessage(websocket.TextMessage, payloads.ErrPack(4001))
+		_ = conn.WriteMessage(websocket.TextMessage, payloads.ErrPack(util.ErrCodeAppNotExist))
 		_ = conn.Close()
 		return
 	}
@@ -33,11 +33,12 @@ func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request, appKey, client, v
 	if !funk.Contains(constants.SupportedProtocolVersions, protocol) {
 		log.Logger().Error("Unsupported protocol version", protocol)
 		_ = conn.SetWriteDeadline(time.Now().Add(time.Second))
-		_ = conn.WriteMessage(websocket.TextMessage, payloads.ErrPack(4007))
+		_ = conn.WriteMessage(websocket.TextMessage, payloads.ErrPack(util.ErrCodeUnsupportedProtocolVersion))
 		_ = conn.Close()
 		return
 	}
 	socketID := util.GenerateSocketID()
+	log.Logger().Tracef("New socket id: %s\n", socketID)
 	session := &Session{
 		conn:             conn,
 		client:           client,
@@ -59,6 +60,7 @@ func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request, appKey, client, v
 	session.Send(payloads.EstablishPack(socketID))
 }
 
+// TODO: Implement origin validation
 var upgrader = websocket.Upgrader{
 	CheckOrigin:     func(r *http.Request) bool { return true },
 	ReadBufferSize:  constants.MaxMessageSize,

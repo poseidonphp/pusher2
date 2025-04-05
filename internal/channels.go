@@ -67,7 +67,7 @@ func ValidatePresenceChannelRequirements(channel constants.ChannelName, userData
 
 	uErr := json.Unmarshal([]byte(userData), &presenceMemberData)
 	if uErr != nil {
-		log.Logger().Errorf("Error unmarshalling presence channel data: %s", err)
+		log.Logger().Errorf("Error unmarshalling presence channel data: %s", uErr)
 		err = util.NewError(util.ErrCodeInvalidPayload)
 	}
 	if len(presenceMemberData.UserID) > constants.MaxPresenceUserIDLength {

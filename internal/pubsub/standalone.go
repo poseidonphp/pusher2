@@ -1,11 +1,8 @@
 package pubsub
 
 import (
-	"encoding/json"
 	pusherClient "github.com/pusher/pusher-http-go/v5"
 	"pusher/internal/constants"
-	"pusher/internal/payloads"
-	"pusher/internal/util"
 	"pusher/log"
 	"sync"
 )
@@ -50,79 +47,72 @@ func (s *StandAlonePubSubManager) Publish(_ constants.ChannelName, msg ServerMes
 	return nil
 }
 
-func (s *StandAlonePubSubManager) AddUserToPresence(nodeID constants.NodeID, channelName constants.ChannelName, socketID constants.SocketID, memberData pusherClient.MemberData) error {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	if _, ok := s.presenceChannels[channelName]; !ok {
-		s.presenceChannels[channelName] = make(map[constants.SocketID]pusherClient.MemberData)
-	}
-	s.presenceChannels[channelName][socketID] = memberData
-	return nil
-}
-
-func (s *StandAlonePubSubManager) RemoveUserFromPresence(_ constants.NodeID, channelName constants.ChannelName, socketID constants.SocketID) error {
-	return nil
-}
-
-func (s *StandAlonePubSubManager) AdjustChannelCount(_ constants.NodeID, channelName constants.ChannelName, countToAdd int64) error {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	if _, ok := s.globalChannels[channelName]; !ok {
-		s.globalChannels[channelName] = 0
-	}
-	s.globalChannels[channelName] += countToAdd
-	return nil
-}
-
-func (s *StandAlonePubSubManager) GetPresenceData(channelName constants.ChannelName) ([]byte, error) {
-	_presenceData := payloads.PresenceData{
-		IDs:   []string{},
-		Hash:  map[string]map[string]string{},
-		Count: 0,
-	}
-
-	s.mutex.Lock()
-	for _, mData := range s.presenceChannels[channelName] {
-		_presenceData.Hash[mData.UserID] = mData.UserInfo
-		_presenceData.IDs = append(_presenceData.IDs, mData.UserID)
-	}
-	s.mutex.Unlock()
-	//if newlyAddedMember != nil {
-	//	_presenceData.Hash[newlyAddedMember.UserID] = newlyAddedMember.UserInfo
-	//	_presenceData.IDs = append(_presenceData.IDs, newlyAddedMember.UserID)
-	//}
-	_presenceData.Count = len(_presenceData.IDs)
-
-	presenceData, pErr := json.Marshal(map[string]payloads.PresenceData{"presence": _presenceData})
-	if pErr != nil {
-		log.Logger().Errorf("Error marshalling presence data: %s", pErr)
-		return nil, pErr
-	}
-	return presenceData, nil
-}
-
-func (s *StandAlonePubSubManager) GetPresenceDataForSocket(nodeID constants.NodeID, channelName constants.ChannelName, socketID constants.SocketID) (*pusherClient.MemberData, error) {
-	return nil, nil
-}
-
-func (s *StandAlonePubSubManager) GetChannelCount(channelName constants.ChannelName) int64 {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	if util.IsPresenceChannel(channelName) {
-		if count, ok := s.presenceChannels[channelName]; ok {
-			return int64(len(count))
-		}
-		return 0
-	}
-	if count, ok := s.globalChannels[channelName]; ok {
-		return count
-	}
-	return 0
-}
-
-//func (s *StandAlonePubSubManager) AddNewNode(nodeID constants.NodeID) error {
+//func (s *StandAlonePubSubManager) AddUserToPresence(nodeID constants.NodeID, channelName constants.ChannelName, socketID constants.SocketID, memberData pusherClient.MemberData) error {
 //	s.mutex.Lock()
-//	s.nodeList[nodeID] = true
-//	s.mutex.Unlock()
+//	defer s.mutex.Unlock()
+//	if _, ok := s.presenceChannels[channelName]; !ok {
+//		s.presenceChannels[channelName] = make(map[constants.SocketID]pusherClient.MemberData)
+//	}
+//	s.presenceChannels[channelName][socketID] = memberData
 //	return nil
+//}
+//
+//func (s *StandAlonePubSubManager) RemoveUserFromPresence(_ constants.NodeID, channelName constants.ChannelName, socketID constants.SocketID) error {
+//	return nil
+//}
+//
+//func (s *StandAlonePubSubManager) AdjustChannelCount(_ constants.NodeID, channelName constants.ChannelName, countToAdd int64) error {
+//	s.mutex.Lock()
+//	defer s.mutex.Unlock()
+//	if _, ok := s.globalChannels[channelName]; !ok {
+//		s.globalChannels[channelName] = 0
+//	}
+//	s.globalChannels[channelName] += countToAdd
+//	return nil
+//}
+//
+//func (s *StandAlonePubSubManager) GetPresenceData(channelName constants.ChannelName) ([]byte, error) {
+//	_presenceData := payloads.PresenceData{
+//		IDs:   []string{},
+//		Hash:  map[string]map[string]string{},
+//		Count: 0,
+//	}
+//
+//	s.mutex.Lock()
+//	for _, mData := range s.presenceChannels[channelName] {
+//		_presenceData.Hash[mData.UserID] = mData.UserInfo
+//		_presenceData.IDs = append(_presenceData.IDs, mData.UserID)
+//	}
+//	s.mutex.Unlock()
+//	//if newlyAddedMember != nil {
+//	//	_presenceData.Hash[newlyAddedMember.UserID] = newlyAddedMember.UserInfo
+//	//	_presenceData.IDs = append(_presenceData.IDs, newlyAddedMember.UserID)
+//	//}
+//	_presenceData.Count = len(_presenceData.IDs)
+//
+//	presenceData, pErr := json.Marshal(map[string]payloads.PresenceData{"presence": _presenceData})
+//	if pErr != nil {
+//		log.Logger().Errorf("Error marshalling presence data: %s", pErr)
+//		return nil, pErr
+//	}
+//	return presenceData, nil
+//}
+//
+//func (s *StandAlonePubSubManager) GetPresenceDataForSocket(nodeID constants.NodeID, channelName constants.ChannelName, socketID constants.SocketID) (*pusherClient.MemberData, error) {
+//	return nil, nil
+//}
+//
+//func (s *StandAlonePubSubManager) GetChannelCount(channelName constants.ChannelName) int64 {
+//	s.mutex.Lock()
+//	defer s.mutex.Unlock()
+//	if util.IsPresenceChannel(channelName) {
+//		if count, ok := s.presenceChannels[channelName]; ok {
+//			return int64(len(count))
+//		}
+//		return 0
+//	}
+//	if count, ok := s.globalChannels[channelName]; ok {
+//		return count
+//	}
+//	return 0
 //}

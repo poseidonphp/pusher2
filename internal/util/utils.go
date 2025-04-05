@@ -98,6 +98,15 @@ func ValidateChannelAuth(authToken string, socketId constants.SocketID, channel 
 	}
 
 	reconstructedString := strings.Join(reconstructedStringParts, ":")
-	expected := hmacSignature(reconstructedString, env.GetString("APP_SECRET", ""))
+	expected := HmacSignature(reconstructedString, env.GetString("APP_SECRET", ""))
 	return hmac.Equal([]byte(signature), []byte(expected))
+}
+
+func ListContains[T comparable](list []T, item T) bool {
+	for _, v := range list {
+		if v == item {
+			return true
+		}
+	}
+	return false
 }

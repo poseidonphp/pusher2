@@ -39,7 +39,8 @@ type EstablishData struct {
 
 // EstablishPack Channels -> Client
 func EstablishPack(socketID constants.SocketID) []byte {
-	data := EstablishData{SocketID: socketID, ActivityTimeout: env.GetInt("ACTIVITY_TIMEOUT", 60)}
+	data := EstablishData{SocketID: socketID, ActivityTimeout: env.GetInt("ACTIVITY_TIMEOUT", 10)}
+	//data := EstablishData{SocketID: socketID, ActivityTimeout: 20}
 	b, err := json.Marshal(data)
 	if err != nil {
 		panic(err)
@@ -65,17 +66,14 @@ func ErrPack(code util.ErrorCode) []byte {
 	return PayloadPack(constants.PusherError, string(b))
 }
 
-// **** PING AND PONG ****
+// **** PONG ****
 
-// PingPong ...
-type PingPong struct {
-	Event string            `json:"event"`
-	Data  map[string]string `json:"data"`
+type Pong struct {
+	Event string `json:"event"`
 }
 
-// PingPongPack ...
-func PingPongPack(event string) []byte {
-	data := PingPong{Event: event, Data: map[string]string{}}
+func PongPack() []byte {
+	data := Pong{Event: constants.PusherPong}
 	b, err := json.Marshal(data)
 	if err != nil {
 		panic(err)
@@ -84,6 +82,7 @@ func PingPongPack(event string) []byte {
 }
 
 // **** SUBSCRIBE ****
+
 // Subscribe ...
 type SubscribePayload struct {
 	Event string               `json:"event"`

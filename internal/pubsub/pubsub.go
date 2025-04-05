@@ -15,10 +15,12 @@ type PubSubManagerContract interface {
 type ServerEventName string
 
 type ServerMessage struct {
-	NodeID   constants.NodeID   `json:"node_id"`
-	Event    ServerEventName    `json:"event"`
-	Payload  []byte             `json:"payload"`
-	SocketID constants.SocketID `json:"socket_id"` // optional - can be used to exclude the socket from receiving the event
+	NodeID        constants.NodeID     `json:"node_id"`
+	Event         ServerEventName      `json:"event"`
+	Payload       []byte               `json:"payload"`
+	SocketID      constants.SocketID   `json:"socket_id"`  // optional - can be used to exclude the socket from receiving the event
+	SocketIDs     []constants.SocketID `json:"socket_ids"` // optional - can be used to exclude multiple sockets from receiving the event
+	SkipBroadcast bool                 `json:"skip_broadcast"`
 }
 
 type PubSubCore struct {

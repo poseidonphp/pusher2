@@ -21,6 +21,9 @@ type StandaloneStorageManager struct {
 	commChannel      chan pubsub.ServerMessage
 }
 
+// *********** NON-INTERFAFCE METHODS ***********
+
+// Init initializes the StandaloneStorageManager
 func (s *StandaloneStorageManager) Init() error {
 	s.listOfNodes = make(map[constants.NodeID]int64)
 	s.presenceChannels = make(map[constants.ChannelName]map[constants.NodeID]map[constants.SocketID]pusherClient.MemberData)
@@ -54,6 +57,8 @@ func (s *StandaloneStorageManager) updateNodeHeartbeat(nodeID constants.NodeID) 
 		s.listOfNodes[nodeID] = time.Now().Unix()
 	}
 }
+
+// *********** INTERFACE-SPECIFIC METHODS ***********
 
 func (s *StandaloneStorageManager) AddNewNode(nodeID constants.NodeID) error {
 	s.mutex.Lock()
@@ -191,7 +196,7 @@ func (s *StandaloneStorageManager) RemoveUserFromPresence(nodeID constants.NodeI
 	return nil
 }
 
-func (s *StandaloneStorageManager) GetPresenceData(channelName constants.ChannelName) ([]byte, error) {
+func (s *StandaloneStorageManager) GetPresenceData(channelName constants.ChannelName, currentUser pusherClient.MemberData) ([]byte, []constants.SocketID, error) {
 	_presenceData := payloads.PresenceData{
 		Count: 0,
 		Hash:  map[string]map[string]string{},
@@ -199,8 +204,17 @@ func (s *StandaloneStorageManager) GetPresenceData(channelName constants.Channel
 	}
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
+	usersSocketIDs := make([]constants.SocketID, 0)
+
+	// append the current user, since they are likely not in the list yet
+	_presenceData.Hash[currentUser.UserID] = currentUser.UserInfo
+	_presenceData.IDs = append(_presenceData.IDs, currentUser.UserID)
+
 	for _, nodeData := range s.presenceChannels[channelName] {
-		for _, memberData := range nodeData {
+		for socketId, memberData := range nodeData {
+			if memberData.UserID == currentUser.UserID {
+				usersSocketIDs = append(usersSocketIDs, socketId)
+			}
 			_presenceData.Hash[memberData.UserID] = memberData.UserInfo
 			_presenceData.IDs = append(_presenceData.IDs, memberData.UserID)
 		}
@@ -208,9 +222,9 @@ func (s *StandaloneStorageManager) GetPresenceData(channelName constants.Channel
 	_presenceData.Count = len(_presenceData.IDs)
 	presenceData, pErr := json.Marshal(map[string]payloads.PresenceData{"presence": _presenceData})
 	if pErr != nil {
-		return nil, pErr
+		return nil, usersSocketIDs, pErr
 	}
-	return presenceData, nil
+	return presenceData, usersSocketIDs, nil
 }
 
 func (s *StandaloneStorageManager) GetPresenceDataForSocket(nodeID constants.NodeID, channelName constants.ChannelName, socketID constants.SocketID) (*pusherClient.MemberData, error) {
@@ -231,6 +245,5 @@ func (s *StandaloneStorageManager) SocketDidHeartbeat(_ constants.NodeID, _ cons
 }
 
 func (s *StandaloneStorageManager) Cleanup() {
-	//TODO implement me
-	panic("implement me")
+	return
 }
