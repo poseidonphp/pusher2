@@ -8,8 +8,8 @@ import (
 var PubSubManager PubSubManagerContract
 
 type PubSubManagerContract interface {
-	Subscribe(channelName constants.ChannelName, receiveChannel chan<- ServerMessage)
-	Publish(channelName constants.ChannelName, message ServerMessage) error
+	Subscribe(channelName string, receiveChannel chan<- ServerMessage)
+	Publish(channelName string, message ServerMessage) error
 }
 
 type ServerEventName string

@@ -17,6 +17,9 @@ ui:
 	fi
 	cd dev/ui && yarn && yarn dev
 
+.PHONY run:
+run:
+	go run cmd/pusher/main.go
 
 .PHONY auth:
 auth:

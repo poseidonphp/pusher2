@@ -79,8 +79,8 @@ func NewHub() *Hub {
 		localChannels:           make(map[constants.ChannelName]*Channel),
 		sessions:                make(map[constants.SocketID]*Session),
 		broadcast:               make(chan []byte),
-		register:                make(chan *Session),
-		unregister:              make(chan *Session),
+		register:                make(chan *Session, 100),
+		unregister:              make(chan *Session, 100),
 		server2server:           make(chan pubsub.ServerMessage),
 		cleanerPromotionChannel: make(chan pubsub.ServerMessage),
 	}
@@ -113,9 +113,6 @@ func NewHub() *Hub {
 		log.Logger().Fatal(nErr)
 	}
 
-	// Start the background cleaner process
-	go hub.startCleaner()
-
 	return hub
 }
 
@@ -129,7 +126,7 @@ func (h *Hub) initializeStorageManager(storageManagerDriver string, redisClient 
 	case "local":
 		mgr := &storage.StandaloneStorageManager{}
 		_ = mgr.Init()
-		go mgr.ListenForMessages()
+		//go mgr.ListenForMessages()
 		storage.Manager = mgr
 
 	default:
@@ -186,6 +183,11 @@ func (h *Hub) Run() {
 
 	// Subscribe to the pubsub channel for server-to-server messages
 	go pubsub.PubSubManager.Subscribe(constants.SoketRushInternalChannel, h.server2server) // route incoming messages from pubsub to the server2server channel
+	go storage.Manager.Start()
+
+	// Start the background cleaner process
+	time.Sleep(2 * time.Second) // wait for the storage manager to start
+	go h.startCleaner()
 
 	// start listening for hub activity
 	for {
@@ -196,6 +198,7 @@ func (h *Hub) Run() {
 			h.mutex.Lock()
 			h.sessions[session.socketID] = session
 			h.mutex.Unlock()
+			log.Logger().Tracef("[%s]  Registered new socket id: %s\n", session.socketID, session.socketID)
 		case session := <-h.unregister:
 			h.mutex.Lock()
 			delete(h.sessions, session.socketID)
@@ -211,7 +214,7 @@ func (h *Hub) broadcastHeartbeat() {
 	ticker := time.NewTicker(storage.NodePingInterval)
 	defer func() {
 		ticker.Stop()
-		log.Logger().Infoln("Stopping the node heartbeat broadcast")
+		log.Logger().Warnln("Stopping the node heartbeat broadcast")
 	}()
 	for {
 		select {
@@ -235,7 +238,7 @@ func (h *Hub) sendToOtherServers(msg pubsub.ServerMessage) {
 func (h *Hub) handleServerToServerIncoming(msg pubsub.ServerMessage) {
 	switch msg.Event {
 	case constants.SocketRushEventCleanerPromote:
-		if h.cleanerPromotionChannel != nil {
+		if h.cleanerPromotionChannel != nil && h.nodeID != msg.NodeID {
 			close(h.cleanerPromotionChannel)
 			h.cleanerPromotionChannel = nil
 		}
@@ -244,28 +247,6 @@ func (h *Hub) handleServerToServerIncoming(msg pubsub.ServerMessage) {
 		h.handleIncomingChannelEvent(msg)
 	}
 }
-
-// TODO: need to send the disconnected message about clients that were on that node (for presence)
-//func (h *Hub) removeNode(nodeID constants.NodeID) {
-//	h.mutex.Lock()
-//	defer h.mutex.Unlock()
-//
-//	if _, ok := h.otherNodes[nodeID]; ok {
-//		delete(h.otherNodes, nodeID)
-//	}
-//
-//	// loop through channels and remove any node-specific entries
-//	for _, nodes := range h.globalChannels {
-//		if _, ok := nodes[constants.NodeID(nodeID)]; ok {
-//			delete(nodes, constants.NodeID(nodeID))
-//		}
-//	}
-//	for _, nodes := range h.presenceChannels {
-//		if _, ok := nodes[constants.NodeID(nodeID)]; ok {
-//			delete(nodes, constants.NodeID(nodeID))
-//		}
-//	}
-//}
 
 // addPresenceUser adds the socket to the local connections list, adds the info to redis, and notifies other nodes
 func (h *Hub) addPresenceUser(socketID constants.SocketID, channel Channel, memberData pusherClient.MemberData) {
@@ -311,63 +292,6 @@ func (h *Hub) addPresenceUser(socketID constants.SocketID, channel Channel, memb
 	// send to all nodes for broadcast to all clients
 	h.sendToOtherServers(s2s)
 }
-
-// handleRemovePresenceUser accepts a server event payload and removes the user from the presence channel
-//func (h *Hub) handleRemovePresenceUser(serverMessage pubsub.ServerMessage) {
-//	log.Logger().Traceln("Removing presence user")
-//	var channelEvent ChannelEvent
-//	var memberRemovedData MemberRemovedData
-//	e := json.Unmarshal(serverMessage.Payload, &channelEvent)
-//	if e != nil {
-//		log.Logger().Errorf("Error unmarshalling server event channelEvent: %v", e)
-//		return
-//	}
-//
-//	if channelEvent.Channel == "" || channelEvent.Event != constants.PusherInternalPresenceMemberRemoved {
-//		return
-//	}
-//
-//	_ = h.publishChannelEventLocally(channelEvent)
-//
-//	e = json.Unmarshal([]byte(channelEvent.Data), &memberRemovedData)
-//	if e != nil {
-//		log.Logger().Errorf("Error unmarshalling member removed data: %v", e)
-//		return
-//	}
-//
-//	h.mutex.Lock()
-//	defer h.mutex.Unlock()
-//
-//	// remove the user from the presence channel data on the hub
-//	// if the channel is empty, remove the channel from the presenceChannels and announce the channel vacated
-//	if h.presenceChannels[channelEvent.Channel] == nil {
-//		return
-//	}
-//	if h.presenceChannels[channelEvent.Channel][serverMessage.NodeID] == nil {
-//		return
-//	}
-//
-//	// Check if the message originated from this node
-//	//if serverMessage.NodeID == h.nodeID {
-//	//	// inform connected sessions that the user has left
-//	//	for socketId := range h.localChannels[channelEvent.Channel].Connections {
-//	//		if socketId == serverMessage.SocketID {
-//	//			continue
-//	//		}
-//	//		if session, ok := h.sessions[socketId]; ok {
-//	//			session.Send(channelEvent.ToJSON())
-//	//		}
-//	//	}
-//	//}
-//	delete(h.presenceChannels[channelEvent.Channel][serverMessage.NodeID], serverMessage.SocketID)
-//	if len(h.presenceChannels[channelEvent.Channel][serverMessage.NodeID]) == 0 {
-//		delete(h.presenceChannels[channelEvent.Channel], serverMessage.NodeID)
-//	}
-//	if len(h.presenceChannels[channelEvent.Channel]) == 0 {
-//		delete(h.presenceChannels, channelEvent.Channel)
-//		// TODO: announce and send webhook for channel vacated
-//	}
-//}
 
 func (h *Hub) getOrCreateLocalChannel(channel constants.ChannelName) *Channel {
 	h.mutex.Lock()

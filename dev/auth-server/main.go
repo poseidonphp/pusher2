@@ -106,11 +106,16 @@ func AuthWebsocket(c *gin.Context) {
 	var err error
 	if strings.HasPrefix(data.ChannelName, "presence-") {
 		fmt.Println("Authenticating ", data.ChannelName)
-
+		var idAsString string
+		if c.Query("user_id") != "" {
+			idAsString = c.Query("user_id")
+		} else {
+			currentTime := time.Now()
+			currentMinute := currentTime.Minute()
+			idAsString = strconv.Itoa(currentMinute)
+		}
 		// get the current minute
-		currentTime := time.Now()
-		currentMinute := currentTime.Minute()
-		idAsString := strconv.Itoa(currentMinute)
+
 		//idAsString := "9876"
 		fmt.Println("User ID:", idAsString)
 		presenceData := pusher.MemberData{

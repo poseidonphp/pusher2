@@ -25,13 +25,13 @@ const (
 	// PRODUCTION env
 	PRODUCTION = "production"
 
-	PresenceChannelUserLimit                         = 100
-	MaxPresenceUserIDLength                          = 128
-	SoketRushInternalChannel             ChannelName = "socket_rush_internal"
-	SocketRushEventPresenceMemberAdded               = "presence-member-added"
-	SocketRushEventPresenceMemberRemoved             = "presence-member-removed"
-	SocketRushEventChannelEvent                      = "channel-event"
-	SocketRushEventCleanerPromote                    = "cleaner-promote"
+	PresenceChannelUserLimit             = 100
+	MaxPresenceUserIDLength              = 128
+	SoketRushInternalChannel             = "socket_rush_internal"
+	SocketRushEventPresenceMemberAdded   = "presence-member-added"
+	SocketRushEventPresenceMemberRemoved = "presence-member-removed"
+	SocketRushEventChannelEvent          = "channel-event"
+	SocketRushEventCleanerPromote        = "cleaner-promote"
 
 	//Presence                    = "presence"
 	//Private                     = "private"

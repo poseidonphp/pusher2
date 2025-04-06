@@ -20,6 +20,8 @@ const (
 )
 
 type Contract interface {
+	Start()
+
 	// AddNewNode adds a node to the storage list of nodes
 	AddNewNode(nodeID constants.NodeID) error
 

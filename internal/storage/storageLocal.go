@@ -7,6 +7,7 @@ import (
 	"pusher/internal/payloads"
 	"pusher/internal/pubsub"
 	"pusher/internal/util"
+	"pusher/log"
 	"sync"
 	"time"
 )
@@ -30,11 +31,16 @@ func (s *StandaloneStorageManager) Init() error {
 	s.channelCounts = make(map[constants.ChannelName]map[constants.NodeID]int64)
 	s.commChannel = make(chan pubsub.ServerMessage)
 
-	go pubsub.PubSubManager.Subscribe(commChannelName, s.commChannel)
+	//go pubsub.PubSubManager.Subscribe(commChannelName, s.commChannel)
 	return nil
 }
 
 func (s *StandaloneStorageManager) ListenForMessages() {
+	defer func() {
+		log.Logger().Warn("Exiting local storage message listener")
+	}()
+	log.Logger().Traceln("Listening for messages on local storage channel")
+	go pubsub.PubSubManager.Subscribe(commChannelName, s.commChannel)
 	for {
 		select {
 		case msg := <-s.commChannel:
@@ -45,6 +51,8 @@ func (s *StandaloneStorageManager) ListenForMessages() {
 				_ = s.RemoveNode(msg.NodeID)
 			case ServerHeartbeat:
 				s.updateNodeHeartbeat(msg.NodeID)
+			default:
+				log.Logger().Tracef("Received unknown event in storageLocal: %s", msg.Event)
 			}
 		}
 	}
@@ -53,12 +61,25 @@ func (s *StandaloneStorageManager) ListenForMessages() {
 func (s *StandaloneStorageManager) updateNodeHeartbeat(nodeID constants.NodeID) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
+	log.Logger().Tracef("Updating heartbeat for node %s", nodeID)
 	if _, ok := s.listOfNodes[nodeID]; ok {
 		s.listOfNodes[nodeID] = time.Now().Unix()
 	}
 }
 
 // *********** INTERFACE-SPECIFIC METHODS ***********
+
+func (s *StandaloneStorageManager) Start() {
+	// Use a WaitGroup to track goroutines
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+		s.ListenForMessages()
+	}()
+
+}
 
 func (s *StandaloneStorageManager) AddNewNode(nodeID constants.NodeID) error {
 	s.mutex.Lock()
@@ -105,6 +126,7 @@ func (s *StandaloneStorageManager) SendNodeHeartbeat(nodeID constants.NodeID) {
 		Event:   ServerHeartbeat,
 		Payload: []byte{},
 	}
+	log.Logger().Tracef("Sending heartbeat for node %s", nodeID)
 	_ = pubsub.PubSubManager.Publish(commChannelName, _msg)
 
 	s.mutex.Lock()
@@ -112,6 +134,7 @@ func (s *StandaloneStorageManager) SendNodeHeartbeat(nodeID constants.NodeID) {
 
 	for nID, lastHeartbeat := range s.listOfNodes {
 		if time.Now().Unix()-lastHeartbeat > int64(NodePingInterval.Seconds())+5 {
+			log.Logger().Warnf("Node %s has not sent a heartbeat in over %f seconds, removing it from the list of nodes", nID, NodePingInterval.Seconds()+5)
 			_ = s.RemoveNode(nID)
 		}
 	}

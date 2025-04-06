@@ -46,6 +46,10 @@ func (r *RedisStorage) channelCountKey(nodeID constants.NodeID) string {
 
 // *********** INTERFACE-SPECIFIC METHODS ***********
 
+func (r *RedisStorage) Start() {
+
+}
+
 func (r *RedisStorage) AddNewNode(nodeID constants.NodeID) error {
 	log.Logger().Tracef("Adding new node %s", nodeID)
 	currentTimestampInEpoch := float64(time.Now().Unix())

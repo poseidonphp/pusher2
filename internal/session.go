@@ -87,6 +87,7 @@ func (s *Session) senderSubProcess() {
 		GlobalHub.unregister <- s
 		s.closeConnection(util.ErrCodeGoRoutineExited)
 	}()
+	s.trace("starting senderSubProcess()")
 
 	// create a blocking loop for sending messages to the client, pinging for heartbeat, and handling the done/closure channel
 	for {

@@ -9,15 +9,19 @@ Still in the development phase, though some basic functionality is there.
 - [x] Encrypted channel support
 - [x] Private/presence/encrypted channel authentication
 - [x] Client side events
-- [x] Channel APIs
+- [x] Channel APIs/routes
 - [x] Redis pubsub support
 - [x] Redis storage support (including cleaning up stale records from crashed nodes)
 - [x] Multi-node support (via redis)
+- [x] Demo UI for use in development of this server
+- [x] Auth server emulator for use in development of this server
+- [x] Support for local storage (in-memory) for single node
+- [x] Support for local pubsub (in-memory) for single node
 
 ## TODO
-- [ ] Need to finish building the full in-memory storage as opposed to redis storage (still use redis pubsub)
-- [ ] Tests - so far i have 0 tests
-- [ ] NATS support
+- [ ] Local storage for multi-node (high availability; not scalability)
+- [ ] Tests - so far I have 0 tests
+- [ ] ~~NATS support~~
 - [ ] Metrics support (prometheus)
 - [ ] Documentation
 - [ ] Examples
@@ -25,7 +29,6 @@ Still in the development phase, though some basic functionality is there.
 - [ ] SNS support
 - [ ] Webhooks support
 - [ ] Benchmarking
-- [x] Implement additional channel routes (getting data like presence users, counts, etc)
 - [ ] More stuff i'm sure, will update as i think of it
 
 ## Things i'm not happy with...

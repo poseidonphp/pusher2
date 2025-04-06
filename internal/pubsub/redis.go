@@ -3,7 +3,6 @@ package pubsub
 import (
 	"encoding/json"
 	"github.com/go-redis/redis"
-	"pusher/internal/constants"
 	"pusher/log"
 )
 
@@ -16,7 +15,7 @@ func (r *RedisPubSubManager) SetKeyPrefix(prefix string) {
 	r.keyPrefix = prefix
 }
 
-func (r *RedisPubSubManager) Publish(channelName constants.ChannelName, message ServerMessage) error {
+func (r *RedisPubSubManager) Publish(channelName string, message ServerMessage) error {
 	msgBytes, err := json.Marshal(message)
 	if err != nil {
 		log.Logger().Errorf("Could not marshal message: %s", message.Event)
@@ -28,7 +27,7 @@ func (r *RedisPubSubManager) Publish(channelName constants.ChannelName, message 
 	return nil
 }
 
-func (r *RedisPubSubManager) Subscribe(channelName constants.ChannelName, receiveChannel chan<- ServerMessage) {
+func (r *RedisPubSubManager) Subscribe(channelName string, receiveChannel chan<- ServerMessage) {
 	s := r.Client.Subscribe(string(channelName))
 	if s == nil {
 		log.Logger().Error("Could not subscribe to Redis channel")
