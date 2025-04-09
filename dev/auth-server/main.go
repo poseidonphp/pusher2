@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	"github.com/pusher/pusher-http-go/v5"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -29,18 +30,10 @@ func fileExists(filename string) bool {
 }
 
 var encryptionKey string
+var pusherClient *pusher.Client
 
 func init() {
-	fmt.Println("Creating an encryption key for use with encrypted channels")
-	// Generate a random 32-byte key
-	key := make([]byte, 32)
-	_, err := rand.Read(key)
-	if err != nil {
-		log.Fatal("Failed to generate random key:", err)
-	}
 
-	// Convert to Base64
-	encryptionKey = base64.StdEncoding.EncodeToString(key)
 }
 
 func main() {
@@ -53,11 +46,34 @@ func main() {
 		fmt.Println("No .env file found")
 	}
 
+	fmt.Println("Creating an encryption key for use with encrypted channels")
+	// Generate a random 32-byte key
+	key := make([]byte, 32)
+	_, err := rand.Read(key)
+	if err != nil {
+		log.Fatal("Failed to generate random key:", err)
+	}
+
+	// Convert to Base64
+	encryptionKey = base64.StdEncoding.EncodeToString(key)
+
+	pusherClient, _ = pusher.ClientFromURL(
+		fmt.Sprintf("http://%s:%s@%s/apps/%s",
+			os.Getenv("APP_KEY"),
+			os.Getenv("APP_SECRET"),
+			"localhost:6001",
+			os.Getenv("APP_ID"),
+		),
+	)
+	pusherClient.EncryptionMasterKeyBase64 = encryptionKey
+
 	router := gin.Default()
 	router.Use(CORSMiddleware)
 	router.POST("/auth", AuthWebsocket)
 	// test/:channel is used for simulating events being sent from a backend server to connected clients
 	router.POST("/test/:channel", SendMessage)
+
+	router.POST("/webhook", ReceiveWebHook)
 
 	// the following routes are for simulating the Pusher API
 	router.GET("/channels", GetChannelsIndex)
@@ -76,11 +92,6 @@ type AuthRequestData struct {
 	SocketID    string `json:"socket_id" form:"socket_id"`
 }
 
-type MemberData struct {
-	UserID   string            `json:"user_id"`
-	UserInfo map[string]string `json:"user_info,omitempty"`
-}
-
 func AuthWebsocket(c *gin.Context) {
 	var data AuthRequestData
 
@@ -92,25 +103,21 @@ func AuthWebsocket(c *gin.Context) {
 
 	params := "socket_id=" + data.SocketID + "&channel_name=" + data.ChannelName
 	fmt.Println("Auth request params: ", params)
-	pusherClient, _ := pusher.ClientFromURL(
-		fmt.Sprintf("http://%s:%s@%s/apps/%s",
-			os.Getenv("APP_KEY"),
-			os.Getenv("APP_SECRET"),
-			"localhost:6001",
-			os.Getenv("APP_ID"),
-		),
-	)
-	pusherClient.EncryptionMasterKeyBase64 = encryptionKey
 
 	var response []byte
 	var err error
 	if strings.HasPrefix(data.ChannelName, "presence-") {
 		fmt.Println("Authenticating ", data.ChannelName)
-
+		var idAsString string
+		if c.Query("user_id") != "" {
+			idAsString = c.Query("user_id")
+		} else {
+			currentTime := time.Now()
+			currentMinute := currentTime.Minute()
+			idAsString = strconv.Itoa(currentMinute)
+		}
 		// get the current minute
-		currentTime := time.Now()
-		currentMinute := currentTime.Minute()
-		idAsString := strconv.Itoa(currentMinute)
+
 		//idAsString := "9876"
 		fmt.Println("User ID:", idAsString)
 		presenceData := pusher.MemberData{
@@ -173,9 +180,9 @@ func SendMessage(c *gin.Context) {
 	_ = c.ShouldBindJSON(&data)
 
 	// check if channel name starts with "private-encrypted-"
-	if strings.HasPrefix(channel, "private-encrypted-") {
-		client.EncryptionMasterKeyBase64 = encryptionKey
-	}
+	//if strings.HasPrefix(channel, "private-encrypted-") {
+	//	client.EncryptionMasterKeyBase64 = encryptionKey
+	//}
 
 	eventName := "EchoEvent"
 
@@ -191,17 +198,29 @@ func SendMessage(c *gin.Context) {
 
 func GetChannelsIndex(c *gin.Context) {
 	client, e := pusher.ClientFromURL(pusherUrl())
+	client.EncryptionMasterKeyBase64 = encryptionKey
 	if e != nil {
 		panic(e)
 	}
 	var uc string
+	var filter string
 	if c.Query("info") != "" {
 		uc = "user_count"
 	}
-	params := pusher.ChannelsParams{
-		Info: &uc,
+	if c.Query("filter_by_prefix") != "" {
+		filter = c.Query("filter_by_prefix")
 	}
-	channels, _ := client.Channels(params)
+	params := pusher.ChannelsParams{
+		Info:           &uc,
+		FilterByPrefix: &filter,
+	}
+	channels, err := client.Channels(params)
+	if err != nil {
+		fmt.Println("Error getting channels: ", err)
+		c.JSON(http.StatusBadRequest, err.Error())
+		return
+	}
+	fmt.Printf("Channels: %v", channels)
 	c.JSON(http.StatusOK, channels)
 }
 
@@ -211,7 +230,7 @@ func GetChannel(c *gin.Context) {
 		panic(e)
 	}
 	channel := c.Param("channel_name")
-	info := "user_count,subscription_count"
+	info := "user_count,subscription_count,cache"
 	params := pusher.ChannelParams{
 		Info: &info,
 	}
@@ -224,6 +243,34 @@ func ChannelUsers(c *gin.Context) {
 	channel := c.Param("channel_name")
 	info, _ := client.GetChannelUsers(channel)
 	c.JSON(http.StatusOK, info)
+}
+
+func ReceiveWebHook(c *gin.Context) {
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		fmt.Println("Error reading request body: ", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+	//fmt.Println("Body: ", string(body))
+	//fmt.Println("Header: ", c.Request.Header)
+	webhook, qerr := pusherClient.Webhook(c.Request.Header, body)
+	if qerr != nil {
+		fmt.Println("Error parsing webhook: ", qerr)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid webhook"})
+		return
+	}
+	//
+	//var data pusher.Webhook
+	//e := c.BindJSON(&data)
+	//if e != nil {
+	//	fmt.Println("Error binding JSON: ", e)
+	//	c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request data"})
+	//	return
+	//}
+
+	fmt.Println("Received Webhook: ", webhook)
+	c.JSON(http.StatusOK, nil)
 }
 
 func pusherUrl() string {

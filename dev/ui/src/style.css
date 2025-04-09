@@ -23,7 +23,7 @@
   /*color-scheme: light dark;*/
   /*color: rgba(255, 255, 255, 0.87);*/
   /*background-color: #242424;*/
-  @apply bg-zinc-800 text-gray-50;
+  @apply bg-gradient-to-b from-gray-700 to-gray-900  text-gray-50;
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -83,7 +83,7 @@ button:focus-visible {
 #app {
   /*max-width: 1280px;*/
   margin: 0 auto;
-  padding: 2rem;
+  /*padding: 2rem;*/
   text-align: center;
 }
 

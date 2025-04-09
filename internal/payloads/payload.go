@@ -5,7 +5,6 @@ import (
 	"pusher/env"
 	"pusher/internal/constants"
 	"pusher/internal/util"
-	"pusher/log"
 )
 
 // RequestEvent ...
@@ -149,11 +148,6 @@ type ClientChannelEvent struct {
 	Channel constants.ChannelName `json:"channel"`
 }
 
-func MarshalEventPack(payload any) []byte {
-	b, err := json.Marshal(payload)
-	if err != nil {
-		log.Logger().Errorf("Error marshalling event pack: %s", err.Error())
-		panic(err)
-	}
-	return b
+// ChannelCacheMiss
+type ChannelCacheMiss struct {
 }

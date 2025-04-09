@@ -25,17 +25,21 @@ func GenerateSocketID() constants.SocketID {
 
 // IsPresenceChannel ...
 func IsPresenceChannel(channel constants.ChannelName) bool {
-	return strings.HasPrefix(string(channel), "presence-")
+	return strings.HasPrefix(string(channel), "presence-") || strings.HasPrefix(string(channel), "presence-cache-")
 }
 
 // IsPrivateChannel ...
 func IsPrivateChannel(channel constants.ChannelName) bool {
-	return strings.HasPrefix(string(channel), "private-")
+	return strings.HasPrefix(string(channel), "private-") || strings.HasPrefix(string(channel), "private-cache-")
 }
 
 // IsPrivateEcryptedChannel ...
 func IsPrivateEncryptedChannel(channel constants.ChannelName) bool {
-	return strings.HasPrefix(string(channel), "private-encrypted-")
+	return strings.HasPrefix(string(channel), "private-encrypted-") || strings.HasPrefix(string(channel), "private-encrypted-cache-")
+}
+
+func IsCacheChannel(channel constants.ChannelName) bool {
+	return strings.HasPrefix(string(channel), "cache-") || strings.HasPrefix(string(channel), "presence-cache-") || strings.HasPrefix(string(channel), "private-cache-") || strings.HasPrefix(string(channel), "private-encrypted-cache-")
 }
 
 // IsClientEvent ...

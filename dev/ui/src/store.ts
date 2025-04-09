@@ -11,12 +11,12 @@ export const useAppStore = defineStore('app', () => {
     const pusher = ref<Pusher | null>(null)
     const echo = ref<Echo<"pusher"> | null>(null)
 
-    const loadPusher = async (host: string, port: number) => {
+    const loadPusher = async (host: string, port: number, user_id: string = "") => {
 
         const options: EchoOptions<"pusher"> = {
             broadcaster: 'pusher',
             host: host,
-            authEndpoint: 'http://localhost:8099/auth',
+            authEndpoint: 'http://localhost:8099/auth?user_id=' + user_id,
         }
         const pusherOptions: Options = {
             wsHost: host,
@@ -25,7 +25,7 @@ export const useAppStore = defineStore('app', () => {
             forceTLS: false,
             enabledTransports: ['ws', 'wss'],
             cluster: 'mt1',
-            authEndpoint: 'http://localhost:8099/auth',
+            authEndpoint: 'http://localhost:8099/auth?user_id=' + user_id,
             authTransport: 'ajax',
         }
         echo.value = new Echo({

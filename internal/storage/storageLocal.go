@@ -1,12 +1,14 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	pusherClient "github.com/pusher/pusher-http-go/v5"
 	"pusher/internal/constants"
 	"pusher/internal/payloads"
 	"pusher/internal/pubsub"
 	"pusher/internal/util"
+	"pusher/log"
 	"sync"
 	"time"
 )
@@ -30,11 +32,16 @@ func (s *StandaloneStorageManager) Init() error {
 	s.channelCounts = make(map[constants.ChannelName]map[constants.NodeID]int64)
 	s.commChannel = make(chan pubsub.ServerMessage)
 
-	go pubsub.PubSubManager.Subscribe(commChannelName, s.commChannel)
+	//go pubsub.PubSubManager.Subscribe(commChannelName, s.commChannel)
 	return nil
 }
 
 func (s *StandaloneStorageManager) ListenForMessages() {
+	defer func() {
+		log.Logger().Warn("Exiting local storage message listener")
+	}()
+	log.Logger().Traceln("Listening for messages on local storage channel")
+	go pubsub.PubSubManager.Subscribe(commChannelName, s.commChannel)
 	for {
 		select {
 		case msg := <-s.commChannel:
@@ -45,6 +52,8 @@ func (s *StandaloneStorageManager) ListenForMessages() {
 				_ = s.RemoveNode(msg.NodeID)
 			case ServerHeartbeat:
 				s.updateNodeHeartbeat(msg.NodeID)
+			default:
+				log.Logger().Tracef("Received unknown event in storageLocal: %s", msg.Event)
 			}
 		}
 	}
@@ -53,12 +62,25 @@ func (s *StandaloneStorageManager) ListenForMessages() {
 func (s *StandaloneStorageManager) updateNodeHeartbeat(nodeID constants.NodeID) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
+	log.Logger().Tracef("Updating heartbeat for node %s", nodeID)
 	if _, ok := s.listOfNodes[nodeID]; ok {
 		s.listOfNodes[nodeID] = time.Now().Unix()
 	}
 }
 
 // *********** INTERFACE-SPECIFIC METHODS ***********
+
+func (s *StandaloneStorageManager) Start() {
+	// Use a WaitGroup to track goroutines
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+		s.ListenForMessages()
+	}()
+
+}
 
 func (s *StandaloneStorageManager) AddNewNode(nodeID constants.NodeID) error {
 	s.mutex.Lock()
@@ -82,9 +104,9 @@ func (s *StandaloneStorageManager) RemoveNode(nodeID constants.NodeID) error {
 	return nil
 }
 
-func (s *StandaloneStorageManager) PurgeNodeData(nodeID constants.NodeID) error {
+func (s *StandaloneStorageManager) PurgeNodeData(_ constants.NodeID) error {
 	//TODO implement me
-	panic("implement me")
+	return nil
 }
 
 func (s *StandaloneStorageManager) GetAllNodes() ([]string, error) {
@@ -99,22 +121,33 @@ func (s *StandaloneStorageManager) GetAllNodes() ([]string, error) {
 	return nodeList, nil
 }
 
-func (s *StandaloneStorageManager) SendNodeHeartbeat(nodeID constants.NodeID) {
+func (s *StandaloneStorageManager) SendNodeHeartbeat(nodeID constants.NodeID) *time.Time {
 	_msg := pubsub.ServerMessage{
 		NodeID:  nodeID,
 		Event:   ServerHeartbeat,
 		Payload: []byte{},
 	}
-	_ = pubsub.PubSubManager.Publish(commChannelName, _msg)
+	log.Logger().Tracef("Sending heartbeat for node %s", nodeID)
+	currentTime := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	pErr := pubsub.PubSubManager.Publish(ctx, commChannelName, _msg)
+	if pErr != nil {
+		log.Logger().Errorf("Error publishing heartbeat message: %v", pErr)
+		return nil
+	}
+	log.Logger().Tracef("...Sent heartbeat for node %s", nodeID)
 
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
 	for nID, lastHeartbeat := range s.listOfNodes {
 		if time.Now().Unix()-lastHeartbeat > int64(NodePingInterval.Seconds())+5 {
+			log.Logger().Warnf("Node %s has not sent a heartbeat in over %f seconds, removing it from the list of nodes", nID, NodePingInterval.Seconds()+5)
 			_ = s.RemoveNode(nID)
 		}
 	}
+	return &currentTime
 }
 
 func (s *StandaloneStorageManager) AddChannel(channel constants.ChannelName) error {
@@ -162,9 +195,12 @@ func (s *StandaloneStorageManager) AdjustChannelCount(nodeID constants.NodeID, c
 		s.channelCounts[channelName][nodeID] = 0
 	}
 	s.channelCounts[channelName][nodeID] += countToAdd
+
+	handleChannelCountChanges(channelName, s.channelCounts[channelName][nodeID], countToAdd)
 	return nil
 }
 
+// GetChannelCount returns the count of subscribers for a channel (not unique to user ids)
 func (s *StandaloneStorageManager) GetChannelCount(channelName constants.ChannelName) int64 {
 	runningCount := int64(0)
 
@@ -172,8 +208,12 @@ func (s *StandaloneStorageManager) GetChannelCount(channelName constants.Channel
 	defer s.mutex.RUnlock()
 
 	if util.IsPresenceChannel(channelName) {
-		for _, count := range s.channelCounts[channelName] {
-			runningCount += count
+		if _, ok := s.presenceChannels[channelName]; !ok {
+			return 0
+		}
+
+		for _, nodeData := range s.presenceChannels[channelName] {
+			runningCount += int64(len(nodeData))
 		}
 	} else {
 		for _, count := range s.channelCounts[channelName] {
@@ -193,17 +233,21 @@ func (s *StandaloneStorageManager) AddUserToPresence(nodeID constants.NodeID, ch
 	if _, ok := s.presenceChannels[channelName][nodeID]; !ok {
 		s.presenceChannels[channelName][nodeID] = make(map[constants.SocketID]pusherClient.MemberData)
 	}
+
 	s.presenceChannels[channelName][nodeID][socketID] = memberData
+	//newCount := int64(len(s.presenceChannels[channelName][nodeID]))
+
 	return nil
 }
 
 func (s *StandaloneStorageManager) RemoveUserFromPresence(nodeID constants.NodeID, channelName constants.ChannelName, socketID constants.SocketID) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-
+	//var newCount int64
 	if _, ok := s.presenceChannels[channelName]; ok {
 		if _, ok := s.presenceChannels[channelName][nodeID]; ok {
 			delete(s.presenceChannels[channelName][nodeID], socketID)
+			//newCount = int64(len(s.presenceChannels[channelName][nodeID]))
 		}
 	}
 	return nil

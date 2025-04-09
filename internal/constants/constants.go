@@ -10,6 +10,8 @@ type SocketID string
 
 type ChannelType string
 
+type WebHookEvent string
+
 const (
 	ChannelTypePresence         ChannelType = "presence"
 	ChannelTypePrivate          ChannelType = "private"
@@ -18,42 +20,34 @@ const (
 )
 
 const (
-	// DEVELOPMENT env
-	DEVELOPMENT = "development"
-	// TEST env
-	TEST = "test"
 	// PRODUCTION env
 	PRODUCTION = "production"
 
-	PresenceChannelUserLimit                         = 100
-	MaxPresenceUserIDLength                          = 128
-	SoketRushInternalChannel             ChannelName = "socket_rush_internal"
-	SocketRushEventPresenceMemberAdded               = "presence-member-added"
-	SocketRushEventPresenceMemberRemoved             = "presence-member-removed"
-	SocketRushEventChannelEvent                      = "channel-event"
-	SocketRushEventCleanerPromote                    = "cleaner-promote"
+	MaxPresenceUserIDLength       = 128
+	SoketRushInternalChannel      = "socket_rush_internal"
+	SocketRushEventChannelEvent   = "channel-event"
+	SocketRushEventCleanerPromote = "cleaner-promote"
 
-	//Presence                    = "presence"
-	//Private                     = "private"
-	//Client                      = "client"
 	PusherError                         = "pusher:error"
+	PusherCacheMiss                     = "pusher:cache_miss"
 	PusherSubscribe                     = "pusher:subscribe"
 	PusherUnsubscribe                   = "pusher:unsubscribe"
 	PusherPing                          = "pusher:ping"
 	PusherPong                          = "pusher:pong"
 	PusherConnectionEstablished         = "pusher:connection_established"
-	PusherSubscriptionSucceeded         = "pusher:subscription_succeeded" // send with list of presence users
 	PusherInternalSubscriptionSucceeded = "pusher_internal:subscription_succeeded"
 	PusherInternalPresenceMemberAdded   = "pusher_internal:member_added"
 	PusherInternalPresenceMemberRemoved = "pusher_internal:member_removed"
-	PusherChannelSetKey                 = "pusher:channels"
-	PusherUserSetKey                    = "pusher:users"
 
-	WebHookMemberAdded     = "member_added"
-	WebHookMemberRemoved   = "member_removed"
-	WebHookChannelOccupied = "channel_occupied"
-	WebHookChannelVacated  = "channel_vacated"
-	WebHookClientEvent     = "client_event"
+	// WEBHOOKS
+
+	WebHookMemberAdded       WebHookEvent = "member_added"
+	WebHookMemberRemoved     WebHookEvent = "member_removed"
+	WebHookChannelOccupied   WebHookEvent = "channel_occupied"
+	WebHookChannelVacated    WebHookEvent = "channel_vacated"
+	WebHookClientEvent       WebHookEvent = "client_event"
+	WebHookSubscriptionCount WebHookEvent = "subscription_count"
+	WebHookCacheMiss         WebHookEvent = "cache_miss"
 
 	WriteWait      = 10 * time.Second // Time allowed to write a message to the peer.
 	MaxMessageSize = 1024             // Maximum message size allowed from peer.

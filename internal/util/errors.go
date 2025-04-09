@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"pusher/internal/config"
-	"pusher/internal/constants"
 )
 
 type ErrorCode int
@@ -35,6 +34,7 @@ const (
 	ErrCodeClientOnlySupportsPrivatePresence ErrorCode = 4017
 
 	ErrCodeOverCapacity          ErrorCode = 4100
+	ErrCodeServerShuttingDown    ErrorCode = 4105
 	ErrCodeGenericReconnect      ErrorCode = 4200
 	ErrCodePongNotReceived       ErrorCode = 4201
 	ErrCodeClosedAfterInactivity ErrorCode = 4202
@@ -72,6 +72,8 @@ var (
 
 		ErrCodeClientOnlySupportsPrivatePresence: "Client only supports private and presence channels",
 
+		ErrCodeServerShuttingDown: "Server shutting down",
+
 		ErrCodeGoRoutineExited:          "Go routine exited",
 		ErrCodeOverCapacity:             "Over capacity",
 		ErrCodeGenericReconnect:         "Generic reconnect immediately",
@@ -82,9 +84,10 @@ var (
 		ErrCodeWebsocketAbnormalClosure: "Websocket abnormal closure",
 	}
 
-	ErrInvalidChannel                 = errors.New("channel's name are invalid")
-	ErrAPIReqEventDataTooLarge        = fmt.Errorf("request event data too large, limit to %dkb", constants.MaxEventSizeKb)
+	ErrInvalidChannel                 = errors.New("invalid channel name")
 	ErrAPIReqEventChannelsSizeTooLong = errors.New("request event channels size too big, limit to 100")
+
+	// ErrAPIReqEventDataTooLarge        = fmt.Errorf("request event data too large, limit to %dkb", constants.MaxEventSizeKb)
 )
 
 func (e ErrorCode) Error() string {

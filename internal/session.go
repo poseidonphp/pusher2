@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"github.com/gorilla/websocket"
 	pusherClient "github.com/pusher/pusher-http-go/v5"
+	"pusher/internal/cache"
 	"pusher/internal/config"
 	"pusher/internal/constants"
+	"pusher/internal/dispatcher"
 	"pusher/internal/payloads"
 	"pusher/internal/storage"
 	"pusher/internal/util"
@@ -28,6 +30,12 @@ type Session struct {
 	socketID         constants.SocketID
 	closed           bool
 	done             chan struct{} // when closed, will signal to other goroutines to exit
+}
+
+func (s *Session) CloseSession() {
+	s.Send(payloads.ErrPack(util.ErrCodeServerShuttingDown))
+	time.Sleep(500 * time.Millisecond) // give a little time to ensure the message sent before we close the connection
+	s.closeConnection(util.ErrCodeServerShuttingDown)
 }
 
 func (s *Session) handleReadMessageError(err error) {
@@ -87,6 +95,7 @@ func (s *Session) senderSubProcess() {
 		GlobalHub.unregister <- s
 		s.closeConnection(util.ErrCodeGoRoutineExited)
 	}()
+	s.trace("starting senderSubProcess()")
 
 	// create a blocking loop for sending messages to the client, pinging for heartbeat, and handling the done/closure channel
 	for {
@@ -225,9 +234,11 @@ func (s *Session) handleSubscribeRequest(msgRaw []byte) *util.Error {
 		return util.NewError(util.ErrCodeInvalidChannel)
 	}
 
+	channelObj := CreateChannelFromString(channel)
+
 	// Check if this session is already subscribed to the channel
 	s.mutex.Lock()
-	if s.subscriptions[channel] {
+	if s.subscriptions[channelObj.Name] {
 		s.mutex.Unlock()
 		s.Send(payloads.ErrPack(util.ErrCodeAlreadySubscribed))
 		return util.NewError(util.ErrCodeAlreadySubscribed)
@@ -235,10 +246,10 @@ func (s *Session) handleSubscribeRequest(msgRaw []byte) *util.Error {
 	s.mutex.Unlock()
 
 	// Get a struct for the channel, ensuring it exists on the hub
-	ch := GlobalHub.getOrCreateLocalChannel(channel)
+	ch := GlobalHub.getOrCreateLocalChannel(channelObj)
 
-	// Validate the auth token if it's a private or presence channel
-	if ch.Type == constants.ChannelTypePrivate || ch.Type == constants.ChannelTypePresence || ch.Type == constants.ChannelTypePrivateEncrypted {
+	// Validate the auth token if the channel requires it
+	if channelObj.RequiresAuth {
 		authToken := subscribePayload.Data.Auth
 		if !util.ValidateChannelAuth(authToken, s.socketID, channel, subscribePayload.Data.ChannelData) {
 			s.errorf("Invalid auth token for channel: %s", channel)
@@ -250,7 +261,7 @@ func (s *Session) handleSubscribeRequest(msgRaw []byte) *util.Error {
 	}
 
 	// Made it this far, good to continue subscribing the user
-	if ch.Type == constants.ChannelTypePresence {
+	if channelObj.Type == constants.ChannelTypePresence {
 		// get the member data for currently connected users
 		memberData, presenceErr := ValidatePresenceChannelRequirements(channel, subscribePayload.Data.ChannelData)
 		if presenceErr != nil {
@@ -295,7 +306,7 @@ func (s *Session) confirmedChannelSubscription(channel *Channel, memberData *pus
 		// Get the current presence channel data from the hub, send to the user
 		presenceData, _, pErr := storage.Manager.GetPresenceData(channel.Name, *memberData)
 
-		GlobalHub.addPresenceUser(s.socketID, *channel, *memberData)
+		GlobalHub.addPresenceUser(s.socketID, channel, *memberData)
 
 		if pErr != nil {
 			log.Logger().Errorf("Error marshalling presence data: %s", pErr)
@@ -306,6 +317,28 @@ func (s *Session) confirmedChannelSubscription(channel *Channel, memberData *pus
 		s.Send(payloads.SubscriptionSucceededPack(channel.Name, string(presenceData)))
 	} else {
 		s.Send(payloads.SubscriptionSucceededPack(channel.Name, "{}"))
+	}
+
+	if channel.IsCache {
+		log.Logger().Tracef("This is a cache channel - do the needful")
+		// retrieve the data from the cache if it exists, otherwise send the cache_miss event
+		cachedData, exists := cache.ChannelCache.Get(string(channel.Name))
+		if exists {
+			s.Send([]byte(cachedData))
+		} else {
+			log.Logger().Tracef("Cache miss for channel: %s", channel.Name)
+			// send the cache_miss event to the client and send the cache_miss webhook
+			cMiss := payloads.PayloadPack(constants.PusherCacheMiss, "")
+			s.Send(cMiss)
+			webhookEvent := pusherClient.WebhookEvent{
+				Name:    string(constants.WebHookCacheMiss),
+				Channel: string(channel.Name),
+			}
+			//TODO Throttle the requests to only process the same cache_miss every x minutes (10?)
+			dispatcher.Dispatcher.Dispatch(webhookEvent)
+		}
+	} else {
+		log.Logger().Tracef("This is not a cache channel - do nothing (%s, %s, %t)", channel.Name, channel.Type, channel.IsCache)
 	}
 
 	// add the session to the channel on the hub
@@ -345,6 +378,14 @@ func (s *Session) handleClientEvent(msgRaw []byte) *util.Error {
 	}
 	eventForm.Data = string(dataBytes)
 
+	webhookEvent := pusherClient.WebhookEvent{
+		Name:     string(constants.WebHookClientEvent),
+		Channel:  string(channel),
+		Event:    clientChannelEvent.Event,
+		Data:     string(clientChannelEvent.Data),
+		SocketID: string(s.socketID),
+	}
+
 	if util.IsPresenceChannel(channel) {
 		//presenceChannelData, getPresenceErr := GlobalHub.getPresenceMemberDataForSocket(channel, s.socketID)
 		presenceChannelData, getPresenceErr := storage.Manager.GetPresenceDataForSocket(GlobalHub.nodeID, channel, s.socketID)
@@ -354,8 +395,12 @@ func (s *Session) handleClientEvent(msgRaw []byte) *util.Error {
 		//hookEvent.UserID = presenceChannelData.UserID
 
 		eventForm.UserID = presenceChannelData.UserID
+		webhookEvent.UserID = presenceChannelData.UserID
 	}
 	_ = GlobalHub.PublishChannelEventGlobally(eventForm)
+
+	// Dispatch the webhook for this event; no need to check for flapping
+	dispatcher.Dispatcher.Dispatch(webhookEvent)
 
 	return nil
 }
@@ -388,8 +433,11 @@ func (s *Session) closeConnection(errorCode util.ErrorCode) {
 	close(s.done)
 
 	// call the removeSessionFromChannels
-	GlobalHub.removeSessionFromChannels(s)
-	GlobalHub.unregister <- s
+	if !errors.Is(errorCode, util.ErrCodeServerShuttingDown) {
+		GlobalHub.removeSessionFromChannels(s)
+		GlobalHub.unregister <- s
+	}
+
 }
 
 func (s *Session) Tracef(format string, args ...any) {

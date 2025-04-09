@@ -12,13 +12,15 @@ import (
 
 type RedisClient struct {
 	client redis.UniversalClient
-	prefix string
+	Prefix string
 }
+
+var RedisClientInstance *RedisClient
 
 var redisOnce sync.Once
 
 func (r *RedisClient) GetKey(key string) string {
-	return r.prefix + ":" + key
+	return r.Prefix + ":" + key
 }
 
 func (r *RedisClient) GetClient() redis.UniversalClient {
@@ -107,9 +109,9 @@ func (r *RedisClient) InitRedis(prefix string) error {
 		})
 	}
 	if prefix == "" {
-		r.prefix = "pusher"
+		r.Prefix = "pusher"
 	} else {
-		r.prefix = strings.Trim(prefix, " ")
+		r.Prefix = strings.Trim(prefix, " ")
 	}
 	return nil
 }
