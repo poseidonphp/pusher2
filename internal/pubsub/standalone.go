@@ -1,6 +1,7 @@
 package pubsub
 
 import (
+	"context"
 	"pusher/log"
 	"sync"
 )
@@ -23,7 +24,7 @@ type StandAlonePubSubManager struct {
 }
 
 func (s *StandAlonePubSubManager) Init() error {
-	s.ch = make(chan localPubSubMessage)
+	s.ch = make(chan localPubSubMessage, 100)
 	s.Channels = make(map[string]pubSubChannelConnection)
 	log.Logger().Traceln("Initialized StandAlonePubSubManager")
 	return nil
@@ -47,17 +48,29 @@ func (s *StandAlonePubSubManager) Subscribe(channelName string, receiveChannel c
 	}
 }
 
-func (s *StandAlonePubSubManager) Publish(channel string, msg ServerMessage) error {
+func (s *StandAlonePubSubManager) Publish(ctx context.Context, channelName string, message ServerMessage) error {
+	if ctx == nil {
+		log.Logger().Error("Context is nil")
+		return nil
+	}
 	s.mutex.Lock()
-	if _, ok := s.Channels[channel]; !ok {
-		log.Logger().Warnf("Channel %s not subscribed to", channel)
+	if _, ok := s.Channels[channelName]; !ok {
+		log.Logger().Warnf("Channel %s not subscribed to", channelName)
 		s.mutex.Unlock()
 		return nil
 	}
 	s.mutex.Unlock()
-	s.Channels[channel].InternalChannel <- localPubSubMessage{
-		Message: msg,
-		Channel: channel,
+	lpm := &localPubSubMessage{
+		Message: message,
+		Channel: channelName,
 	}
-	return nil
+	select {
+	case s.Channels[channelName].InternalChannel <- *lpm:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
+	//s.Channels[channelName].InternalChannel <- *lpm
+	//return nil
 }

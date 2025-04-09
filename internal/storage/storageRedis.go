@@ -113,9 +113,11 @@ func (r *RedisStorage) GetAllNodes() ([]string, error) {
 	return nodes, nil
 }
 
-func (r *RedisStorage) SendNodeHeartbeat(nodeID constants.NodeID) {
-	currentTimestampInEpoch := float64(time.Now().Unix())
+func (r *RedisStorage) SendNodeHeartbeat(nodeID constants.NodeID) *time.Time {
+	currentTime := time.Now()
+	currentTimestampInEpoch := float64(currentTime.Unix())
 	r.Client.ZAdd(r.nodeListKey(), redis.Z{Score: currentTimestampInEpoch, Member: string(nodeID)})
+	return &currentTime
 }
 
 func (r *RedisStorage) AddChannel(channel constants.ChannelName) error {
@@ -157,7 +159,17 @@ func (r *RedisStorage) AdjustChannelCount(nodeID constants.NodeID, channelName c
 		•	Fields: each field is {channelName}, with the integer count as the value.
 	*/
 	channelCountKey := r.channelCountKey(nodeID)
-	r.Client.HIncrBy(channelCountKey, string(channelName), countToAdd)
+	newCount := r.Client.HIncrBy(channelCountKey, string(channelName), countToAdd)
+	if newCount.Err() != nil {
+		log.Logger().Errorf("Error incrementing channel count: %s", newCount.Err())
+		return newCount.Err()
+	}
+	if newCount.Val() == 0 {
+		// if the count is 0, remove the channel from the hash
+		r.Client.HDel(channelCountKey, string(channelName))
+	}
+	handleChannelCountChanges(channelName, newCount.Val(), countToAdd)
+
 	return nil
 }
 
@@ -196,13 +208,14 @@ func (r *RedisStorage) AddUserToPresence(nodeID constants.NodeID, channelName co
 	//memberValue := fmt.Sprintf("node:%s:socket:%s", nodeID, socketID)
 	memberValue := fmt.Sprintf("node:%s:socket:%s", nodeID, socketID)
 
-	memberDataBytes, err := json.Marshal(memberData)
-	if err != nil {
-		log.Logger().Errorf("Error marshalling member data: %s", err)
-		return fmt.Errorf("error marshalling member data: %w", err)
+	memberDataBytes, merr := json.Marshal(memberData)
+	if merr != nil {
+		log.Logger().Errorf("Error marshalling member data: %s", merr)
+		return fmt.Errorf("error marshalling member data: %w", merr)
 	}
 
 	r.Client.HSet(channelKey, memberValue, string(memberDataBytes))
+
 	// Note: we do not adjust the channel count for presence channels. When the count is needed, we just return the length of the hash.
 	return nil
 }

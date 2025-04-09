@@ -2,10 +2,14 @@ package api
 
 import (
 	"github.com/gin-gonic/gin"
+	pusherClient "github.com/pusher/pusher-http-go/v5"
+	"github.com/thoas/go-funk"
 	"net/http"
+	"pusher/internal/cache"
 	"pusher/internal/constants"
 	"pusher/internal/storage"
 	"pusher/internal/util"
+	"pusher/log"
 	"strings"
 )
 
@@ -13,37 +17,50 @@ func ChannelIndex(c *gin.Context) {
 	filterByPrefix := c.Query("filter_by_prefix")
 	info := c.Query("info")
 
-	var selectedChannels []constants.ChannelName
-	channels := storage.Manager.Channels()
-	for _, channel := range channels {
-		if storage.Manager.GetChannelCount(channel) > 0 {
-			// occupied channels
-			if filterByPrefix != "" && strings.HasPrefix(string(channel), filterByPrefix) {
-				selectedChannels = append(selectedChannels, channel)
-			} else {
-				selectedChannels = append(selectedChannels, channel)
-			}
-		}
-	}
+	log.Logger().Tracef("filter_by_prefix: %s", filterByPrefix)
+	log.Logger().Tracef("info: %s", info)
 
 	splitFn := func(c rune) bool {
 		return c == ','
 	}
 	infoFields := strings.FieldsFunc(info, splitFn)
-	data := make(map[constants.ChannelName]map[string]any)
-	for _, channel := range selectedChannels {
-		if len(infoFields) > 0 {
-			for _, infoField := range infoFields {
-				if infoField == "user_count" && util.IsPresenceChannel(channel) {
-					data[channel] = map[string]any{"user_count": len(storage.PresenceChannelUserIDs(channel))}
-				}
-			}
+
+	// check if infoFields contains user_count
+	getUserCount := funk.Contains(infoFields, "user_count")
+
+	if filterByPrefix != "presence-" && getUserCount {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "info=user_count requires filter_by_prefix for presence channels"})
+		return
+	}
+
+	channels := storage.Manager.Channels()
+	log.Logger().Tracef("Getting channels list: %v", channels)
+
+	data := pusherClient.ChannelsList{
+		Channels: make(map[string]pusherClient.ChannelListItem, len(channels)),
+	}
+
+	for _, channel := range channels {
+		if filterByPrefix != "" && !strings.HasPrefix(string(channel), filterByPrefix) {
+			log.Logger().Tracef("Skipping channel: %s", channel)
+			continue
+		}
+		var count int
+		if util.IsPresenceChannel(channel) {
+			count = len(storage.PresenceChannelUserIDs(channel))
 		} else {
-			data[channel] = make(map[string]any)
+			count = int(storage.Manager.GetChannelCount(channel))
+		}
+		if count > 0 {
+			item := &pusherClient.ChannelListItem{}
+			if getUserCount {
+				item.UserCount = count
+			}
+			data.Channels[string(channel)] = *item
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{"channels": data})
+	c.JSON(http.StatusOK, data)
 }
 
 func ChannelShow(c *gin.Context) {
@@ -55,15 +72,30 @@ func ChannelShow(c *gin.Context) {
 	}
 	infoFields := strings.FieldsFunc(info, splitFn)
 
-	data := make(map[string]interface{})
+	//data := make(map[string]interface{})
+	//data := &pusherClient.Channel{Name: string(channel)}
+	data := &struct {
+		pusherClient.Channel
+		Cache string `json:"cache,omitempty"`
+	}{}
+
+	data.Name = string(channel)
+
 	subscriptionsCount := storage.Manager.GetChannelCount(channel)
-	data["occupied"] = subscriptionsCount > 0
-	for _, infoField := range infoFields {
-		if infoField == "user_count" && util.IsPresenceChannel(channel) {
-			data["user_count"] = len(storage.PresenceChannelUserIDs(channel))
-		}
-		if infoField == "subscription_count" {
-			data["subscription_count"] = subscriptionsCount
+	data.Occupied = subscriptionsCount > 0
+
+	if funk.Contains(infoFields, "user_count") && util.IsPresenceChannel(channel) {
+		data.UserCount = len(storage.PresenceChannelUserIDs(channel))
+	}
+
+	if funk.Contains(infoFields, "subscription_count") {
+		data.SubscriptionCount = int(subscriptionsCount)
+	}
+
+	if funk.Contains(infoFields, "cache") && util.IsCacheChannel(channel) {
+		cachedData, exists := cache.ChannelCache.Get(string(channel))
+		if exists {
+			data.Cache = cachedData
 		}
 	}
 
@@ -84,10 +116,12 @@ func ChannelUsers(c *gin.Context) {
 	}
 
 	_userIds := storage.PresenceChannelUserIDs(channel)
-	userIds := make([]map[string]string, len(_userIds))
-	for index, id := range _userIds {
-		userIds[index] = map[string]string{"ID": id}
+
+	data := pusherClient.Users{List: make([]pusherClient.User, 0)}
+
+	for _, id := range _userIds {
+		data.List = append(data.List, pusherClient.User{ID: id})
 	}
 
-	c.JSON(http.StatusOK, gin.H{"users": userIds})
+	c.JSON(http.StatusOK, data)
 }

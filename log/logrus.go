@@ -19,7 +19,7 @@ func init() {
 
 func initLogger() {
 	logger = logrus.New()
-	if env.Get("APP_ENV", constants.DEVELOPMENT) == constants.PRODUCTION {
+	if env.GetString("APP_ENV", constants.PRODUCTION) == constants.PRODUCTION {
 		logger.SetFormatter(&logrus.JSONFormatter{})
 	} else {
 		// The TextFormatter is default, you don't actually have to do this.
@@ -27,12 +27,12 @@ func initLogger() {
 	}
 
 	logger.SetOutput(os.Stdout)
-	lvl, err := logrus.ParseLevel(env.GetString("LOG_LEVEL", "debug"))
+	lvl, err := logrus.ParseLevel(env.GetString("LOG_LEVEL", "info"))
 	if err != nil {
-		logger.Infoln("Invalid log level:", env.GetString("LOG_LEVEL", "debug"), lvl)
+		logger.Warnln("Invalid log level:", env.GetString("LOG_LEVEL", "info"), lvl)
 		logger.SetLevel(logrus.InfoLevel)
 	} else {
-		logger.Infoln("Log level:", lvl)
+		logger.Debugln("Log level:", lvl)
 		logger.SetLevel(lvl)
 	}
 }

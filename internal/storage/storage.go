@@ -5,8 +5,10 @@ import (
 	pusherClient "github.com/pusher/pusher-http-go/v5"
 	"github.com/thoas/go-funk"
 	"pusher/internal/constants"
+	"pusher/internal/dispatcher"
 	"pusher/internal/payloads"
 	"pusher/internal/pubsub"
+	"pusher/log"
 	"time"
 )
 
@@ -35,7 +37,7 @@ type Contract interface {
 	GetAllNodes() ([]string, error)
 
 	// SendNodeHeartbeat is used by the node to let storage know that it's still active
-	SendNodeHeartbeat(nodeID constants.NodeID)
+	SendNodeHeartbeat(nodeID constants.NodeID) *time.Time
 
 	// AddChannel adds a channel to the list of channels
 	AddChannel(channel constants.ChannelName) error
@@ -97,4 +99,34 @@ func GetPresenceSocketsForUserID(channelName constants.ChannelName, userID strin
 	_, userSockets, _ := Manager.GetPresenceData(channelName, pusherClient.MemberData{UserID: userID})
 
 	return userSockets
+}
+
+func handleChannelCountChanges(channelName constants.ChannelName, newCount int64, modifiedCount int64) {
+	log.Logger().Tracef("Channel %s count changed to %d (modified by %d)", channelName, newCount, modifiedCount)
+	if newCount == 0 {
+		// publish a vacated channel event
+		log.Logger().Debugf("Channel %s is now vacated", channelName)
+		event := pusherClient.WebhookEvent{
+			Name:    string(constants.WebHookChannelVacated),
+			Channel: string(channelName),
+		}
+		dispatcher.DispatchBuffer.HandleEvent("channel:"+string(channelName), dispatcher.Disconnect, event)
+	} else if newCount == modifiedCount {
+		// if the count is equal to the amount we added, publish a channel occupied event
+		log.Logger().Debugf("Channel %s is now occupied", channelName)
+		event := pusherClient.WebhookEvent{
+			Name:    string(constants.WebHookChannelOccupied),
+			Channel: string(channelName),
+		}
+		dispatcher.DispatchBuffer.HandleEvent("channel:"+string(channelName), dispatcher.Connect, event)
+	}
+
+	// in addition to the above, we will also send a 'subscription_count' webhook
+	// TODO: Cannot implement until WebhookEvent is updated to include SubscriptionCount
+	//event := pusherClient.WebhookEvent{
+	//	Name:    string(constants.WebHookSubscriptionCount),
+	//	Channel: string(channelName),
+	//	SubscriptionCount:
+	//}
+	//dispatcher.DispatchBuffer.HandleEvent("channel:"+string(channelName), dispatcher.Connect, event)
 }

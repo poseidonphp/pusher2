@@ -14,6 +14,12 @@ import (
 
 // ServeWS handles websocket requests from the peer
 func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request, appKey, client, version, protocolStr string) {
+	if !hub.IsAcceptingConnections() {
+		log.Logger().Error("Server is not accepting connections")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+
 	protocol, _ := util.Str2Int(protocolStr)
 
 	conn, err := upgrader.Upgrade(w, r, nil)

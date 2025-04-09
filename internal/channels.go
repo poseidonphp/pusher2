@@ -8,13 +8,58 @@ import (
 	"pusher/internal/storage"
 	"pusher/internal/util"
 	"pusher/log"
+	"strings"
 	"sync"
 )
 
 type Channel struct {
-	Name        constants.ChannelName
-	Connections map[constants.SocketID]bool
-	Type        constants.ChannelType
+	Name         constants.ChannelName
+	Connections  map[constants.SocketID]bool
+	Type         constants.ChannelType
+	RequiresAuth bool
+	IsCache      bool
+	IsEncrypted  bool
+}
+
+func CreateChannelFromString(channelName constants.ChannelName) *Channel {
+	channel := &Channel{
+		Name:         channelName,
+		Connections:  make(map[constants.SocketID]bool),
+		Type:         constants.ChannelTypePrivate,
+		RequiresAuth: false,
+		IsCache:      false,
+		IsEncrypted:  false,
+	}
+
+	if util.IsPresenceChannel(channel.Name) {
+		channel.Type = constants.ChannelTypePresence
+		channel.RequiresAuth = true
+		if strings.HasPrefix(string(channel.Name), "presence-cache-") {
+			channel.IsCache = true
+		}
+	} else if util.IsPrivateEncryptedChannel(channel.Name) {
+		channel.Type = constants.ChannelTypePrivateEncrypted
+		channel.RequiresAuth = true
+		channel.IsEncrypted = true
+		if strings.HasPrefix(string(channel.Name), "private-encrypted-cache-") {
+			channel.IsCache = true
+		}
+	} else if util.IsPrivateChannel(channel.Name) {
+		channel.Type = constants.ChannelTypePrivate
+		channel.RequiresAuth = true
+		if strings.HasPrefix(string(channel.Name), "private-cache-") {
+			channel.IsCache = true
+		}
+	} else {
+		channel.Type = constants.ChannelTypePublic
+		channel.RequiresAuth = false
+		if strings.HasPrefix(string(channel.Name), "cache-") {
+			channel.IsCache = true
+		}
+	}
+	log.Logger().Tracef("🚗Created new channel: %s (%s/%t)", channel.Name, channel.Type, channel.IsCache)
+
+	return channel
 }
 
 type ChannelEvent struct {
@@ -84,23 +129,6 @@ func (c *Channel) addSocketID(socketID constants.SocketID) {
 	c.Connections[socketID] = true
 }
 
-//func (c *Channel) broadcastMemberAddedEvent(memberData pusherClient.MemberData) {
-//	md, e := json.Marshal(memberData)
-//	if e != nil {
-//		log.Logger().Errorf("Error marshalling member data: %s", e)
-//		return
-//	}
-//	channelEvent := ChannelEvent{
-//		Event:   constants.PusherInternalPresenceMemberAdded,
-//		Channel: c.Name,
-//		Data:    string(md),
-//	}
-//	err := GlobalHub.publishChannelEventLocally(channelEvent)
-//	if err != nil {
-//		log.Logger().Errorf("Error broadcasting member_added event: %s", err)
-//	}
-//}
-//
-//func (c *Channel) broadcastEventOnChannel(event ChannelEvent) {
-//
-//}
+func (c *Channel) getOrCreateHubChannel() {
+
+}

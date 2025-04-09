@@ -13,14 +13,7 @@ import (
 // AppEnv is app env
 var AppEnv string
 
-const ()
-const (
-	writeWait      = 10 * time.Second // Time allowed to write a message to the peer.
-	maxMessageSize = 1024             // Maximum message size allowed from peer.
-)
-
 var (
-	PongTimeout              time.Duration
 	ActivityTimeout          time.Duration
 	ReadTimeout              time.Duration
 	MaxPresenceUsers         int64
@@ -41,21 +34,26 @@ func fileExists(filename string) bool {
 // Setup loads environment variables and sets some global variables
 func Setup() error {
 	if fileExists("./.env") {
-		log.Logger().Debugln("Loading .env file")
 		err := godotenv.Load()
 		if err != nil {
-			log.Logger().Fatal("Error loading .env file")
+			log.Logger().Errorln("Error loading .env file")
 			return err
 		}
 	}
-	AppEnv = env.Get("APP_ENV", constants.DEVELOPMENT)
-	log.Logger().Infoln("AppEnv:", AppEnv)
-	lvl, _ := logrus.ParseLevel(env.GetString("LOG_LEVEL", "debug"))
+
+	AppEnv = env.GetString("APP_ENV", constants.PRODUCTION)
+
+	lvl, _ := logrus.ParseLevel(env.GetString("LOG_LEVEL", "info"))
+
 	log.Logger().SetLevel(lvl)
+	if AppEnv != constants.PRODUCTION {
+		log.Logger().SetFormatter(&logrus.TextFormatter{})
+	}
 
-	log.Logger().Infoln("LogLevel", env.Get("LOG_LEVEL", "debug"))
+	log.Logger().Debugln("AppEnv:", AppEnv)
+	log.Logger().Debugln("LogLevel", env.Get("LOG_LEVEL", "info"))
 
-	PongTimeout = time.Duration(env.GetInt64("PONG_TIMEOUT", 30)) * time.Second
+	//PongTimeout = time.Duration(env.GetInt64("PONG_TIMEOUT", 30)) * time.Second
 	ActivityTimeout = time.Duration(env.GetInt64("ACTIVITY_TIMEOUT", 60)) * time.Second
 	ReadTimeout = ActivityTimeout / 9 * 10
 	MaxPresenceUsers = env.GetInt64("MAX_PRESENCE_USERS", 100)

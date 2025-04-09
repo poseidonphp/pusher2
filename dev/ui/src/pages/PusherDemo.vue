@@ -29,8 +29,8 @@
 
       <!-- Column 2 -->
       <div class="col-span-2 ">
-        <div class="grid grid-rows-3 gap-6">
-          <div class="p-6 rounded-lg shadow border-2 border-crimson-500 row-span-2">
+        <div class="grid grid-rows-7 gap-6">
+          <div class="p-6 rounded-lg shadow border-2 border-crimson-500 row-span-3 ">
             <h2 class="text-xl font-semibold mb-4 text-shadow-lg ">Join a new channel</h2>
             <form>
               <div>
@@ -49,7 +49,8 @@
                   <input type="radio" id="public" value="public" v-model="channelToJoinType" /> Public
                 </label>
 
-
+                <br />
+                <input type="checkbox" v-model="channelTypeCache" id="channelTypeCache" /> Cache channel?
                 <br />
                 <button type="submit" @click.prevent="joinNewChannel(channelToJoin)" class="button mt-4">
                   JOIN
@@ -59,8 +60,18 @@
             </form>
           </div>
 
-          <div class="p-6 rounded-lg shadow border-2 border-crimson-500  ">
-            <h2 class="text-xl font-semibold">Whisper</h2>
+          <div class="p-6 rounded-lg shadow border-2 border-crimson-500 row-span-2 ">
+            <h2 class="text-xl font-semibold">📡 Trigger Message</h2>
+            <br />
+
+              <input type="text" v-model="triggerMessage" placeholder="Trigger message" class="border p-2 rounded mb-4" />
+              <br />
+            <input type="checkbox" v-model="triggerIncludeTimestamp" id="triggerIncludeTimestamp" /> Include timestamp?
+
+          </div>
+
+          <div class="p-6 rounded-lg shadow border-2 border-crimson-500 row-span-2 ">
+            <h2 class="text-xl font-semibold">🗣️ Whisper</h2>
             <span class="text-xs text-crimson-400 text-shadow-lg ">Whisper on {{ selectedChannel }}</span>
             <br />
             <form>
@@ -68,6 +79,7 @@
               <button :disabled="!selectedChannel" @click.prevent="sendWhisper" class="button">Send</button>
             </form>
           </div>
+
         </div>
       </div>
 
@@ -108,11 +120,11 @@
 </template>
 
 <script setup lang="ts">
-import {computed, onMounted, ref, watch} from "vue";
+import {computed, onMounted, ref} from "vue";
 import {useAppStore} from "../store.ts";
 import axios from "axios";
 import type {EchoUser, JoinedChannel, PusherChannel} from "../models.ts";
-import {storeToRefs} from "pinia";
+
 
 
 const store = useAppStore()
@@ -130,7 +142,10 @@ const userId = ref("")
 
 const connectionStatus = ref("disconnected")
 
-const {echo} = storeToRefs(store)
+const triggerMessage = ref("Test from app trigger")
+
+const channelTypeCache = ref(false)
+const triggerIncludeTimestamp = ref(true)
 
 // const connectionStatus = computed(() => {
 //   if (store.echo) {
@@ -142,12 +157,13 @@ const {echo} = storeToRefs(store)
 
 
 const computedChannelToJoin = computed(() => {
+  const cacheString = channelTypeCache.value ? "cache-" : ""
   if (channelToJoinType.value === "private") {
-    return `private-${channelToJoin.value}`
+    return `private-${cacheString}${channelToJoin.value}`
   } else if (channelToJoinType.value === "encrypted") {
-    return `private-encrypted-${channelToJoin.value}`
+    return `private-encrypted-${cacheString}${channelToJoin.value}`
   } else {
-    return channelToJoin.value
+    return `${cacheString}${channelToJoin.value}`
   }
 })
 
@@ -194,8 +210,15 @@ const triggerEvent = (channel: string)  => {
     if (!channelToTrigger) {
       return
     }
+
+    let message = triggerMessage.value
+    if (triggerIncludeTimestamp.value) {
+      const timeString = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit', hour12: false})
+      message = `<${timeString}> ${message}`
+    }
+
     axios.post("http://localhost:8099/test/" + channelToTrigger.name + "?name=testEvent", {
-      data: "Test data from manual trigger"
+      data: message
     })
   }
 }
@@ -212,7 +235,12 @@ const disconnect = (channel: string) => {
 
 const joinNewChannel = (channel: string) => {
   if (store.echo && channel.length > 0) {
+    const cacheString = channelTypeCache.value ? "cache-" : ""
+
+    channel = `${cacheString}${channel}`
+    
     let channelName = channel
+
     if (channelToJoinType.value === "encrypted") {
       channelName = `private-encrypted-${channel}`
 

@@ -1,6 +1,7 @@
 package pubsub
 
 import (
+	"context"
 	"fmt"
 	"pusher/internal/constants"
 )
@@ -9,7 +10,7 @@ var PubSubManager PubSubManagerContract
 
 type PubSubManagerContract interface {
 	Subscribe(channelName string, receiveChannel chan<- ServerMessage)
-	Publish(channelName string, message ServerMessage) error
+	Publish(ctx context.Context, channelName string, message ServerMessage) error
 }
 
 type ServerEventName string
