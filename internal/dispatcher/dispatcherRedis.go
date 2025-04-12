@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/go-redis/redis"
 	"github.com/pusher/pusher-http-go/v5"
+	"github.com/redis/go-redis/v9"
 	"pusher/internal/clients"
 	"pusher/internal/webhooks"
 	"pusher/log"
@@ -13,11 +13,16 @@ import (
 )
 
 type RedisDispatcher struct {
-	client redis.UniversalClient
+	DispatcherCore
+	RedisClient    *clients.RedisClient
+	WebhookManager webhooks.WebhookContract
 }
 
-func (rd *RedisDispatcher) Init() {
-	rd.client = clients.RedisClientInstance.GetClient()
+func (rd *RedisDispatcher) Init() error {
+	if rd.RedisClient.Client == nil {
+		return errors.New("redis client is not initialized")
+	}
+	return nil
 }
 
 func (rd *RedisDispatcher) Dispatch(serverEvent pusher.WebhookEvent) {
@@ -29,15 +34,16 @@ func (rd *RedisDispatcher) Dispatch(serverEvent pusher.WebhookEvent) {
 	}
 
 	// Push the event data to the Redis queue
-	queueName := clients.RedisClientInstance.GetKey("webhook_queue")
-	err = rd.client.LPush(queueName, eventData).Err()
+	queueName := rd.RedisClient.GetKey("webhook_queue")
+
+	err = rd.RedisClient.Client.LPush(context.Background(), queueName, eventData).Err()
 	if err != nil {
 		log.Logger().Errorf("Error pushing event to Redis queue: %s", err)
 	}
 }
 
 func (rd *RedisDispatcher) ListenForEvents(ctx context.Context) {
-	queueName := clients.RedisClientInstance.GetKey("webhook_queue")
+	queueName := rd.RedisClient.GetKey("webhook_queue")
 	log.Logger().Infoln("Starting to listen for events on queue:", queueName)
 
 	// Use a shorter timeout to allow checking for context cancellation
@@ -49,7 +55,7 @@ func (rd *RedisDispatcher) ListenForEvents(ctx context.Context) {
 			log.Logger().Infoln("Stopping Redis dispatcher due to context cancellation")
 			return
 		default:
-			eventData, err := rd.client.BRPopLPush(queueName, queueName+"_working", redisPollTimeout).Result()
+			eventData, err := rd.RedisClient.Client.BRPopLPush(context.Background(), queueName, queueName+"_working", redisPollTimeout).Result()
 
 			if err != nil {
 				if errors.Is(err, redis.Nil) {
@@ -64,7 +70,7 @@ func (rd *RedisDispatcher) ListenForEvents(ctx context.Context) {
 		}
 		//// Use BRPOPLPUSH to block until a message is available and atomically pop it into a new temp queue
 		//// The timeout of 0 means block indefinitely
-		//eventData, err := rd.client.BRPopLPush(queueName, queueName+"_working", 0).Result()
+		//eventData, err := rd.Client.BRPopLPush(queueName, queueName+"_working", 0).Result()
 		//if err != nil {
 		//	log.Logger().Errorf("Error receiving event from Redis queue: %s", err)
 		//	// Sleep to prevent tight loop in case of persistent errors
@@ -88,13 +94,13 @@ func (rd *RedisDispatcher) processEvent(rawEventString string, queueName string)
 	// Process the event
 	log.Logger().Debugf("Processing webhook event: %s (%s)", serverEvent.Name, serverEvent.Channel)
 
-	if webhooks.WebhookManager != nil {
+	if rd.WebhookManager != nil {
 		wh := &pusher.Webhook{
 			TimeMs: int(time.Now().UnixMilli()),
 			Events: []pusher.WebhookEvent{serverEvent},
 		}
 		//TODO: Handle error codes such as too many requests, not-found. Retry if needed but keep count of attempts
-		err = webhooks.WebhookManager.Send(*wh)
+		err = rd.WebhookManager.Send(*wh)
 
 		if err != nil {
 			log.Logger().Errorf("Error notifying webhook: %s : %v", err, wh.Events)
@@ -102,7 +108,7 @@ func (rd *RedisDispatcher) processEvent(rawEventString string, queueName string)
 		}
 	}
 	log.Logger().Tracef(".. removing %s from working queue", rawEventString)
-	r := rd.client.LRem(queueName+"_working", 1, rawEventString)
+	r := rd.RedisClient.Client.LRem(context.Background(), queueName+"_working", 1, rawEventString)
 	if r.Err() != nil {
 		log.Logger().Errorf("Error removing event from working queue: %s", r.Err())
 	} else {

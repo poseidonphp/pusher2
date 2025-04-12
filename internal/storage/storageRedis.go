@@ -1,16 +1,18 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/go-redis/redis"
+	"strings"
+	"time"
+
 	pusherClient "github.com/pusher/pusher-http-go/v5"
+	"github.com/redis/go-redis/v9"
 	"pusher/internal/constants"
 	"pusher/internal/payloads"
 	"pusher/internal/util"
 	"pusher/log"
-	"strings"
-	"time"
 )
 
 type RedisStorage struct {
@@ -18,7 +20,7 @@ type RedisStorage struct {
 	KeyPrefix string
 }
 
-// *********** NON-INTERFAFCE METHODS ***********
+// *********** NON INTERFACE METHODS ***********
 
 func (r *RedisStorage) getKey(key string) string {
 	if r.KeyPrefix == "" {
@@ -46,19 +48,29 @@ func (r *RedisStorage) channelCountKey(nodeID constants.NodeID) string {
 
 // *********** INTERFACE-SPECIFIC METHODS ***********
 
-func (r *RedisStorage) Start() {
-
+// Init Initialize the storage manager
+func (r *RedisStorage) Init() error {
+	if r.Client == nil {
+		return fmt.Errorf("redis client is not initialized in storageRedis")
+	}
+	if r.KeyPrefix == "" {
+		return fmt.Errorf("key prefix is not set in storageRedis")
+	}
+	return nil
 }
+
+// Start the storage manager
+func (r *RedisStorage) Start() {}
 
 func (r *RedisStorage) AddNewNode(nodeID constants.NodeID) error {
 	log.Logger().Tracef("Adding new node %s", nodeID)
 	currentTimestampInEpoch := float64(time.Now().Unix())
-	r.Client.ZAdd(r.nodeListKey(), redis.Z{Score: currentTimestampInEpoch, Member: string(nodeID)})
+	r.Client.ZAdd(context.Background(), r.nodeListKey(), redis.Z{Score: currentTimestampInEpoch, Member: string(nodeID)})
 	return nil
 }
 
 func (r *RedisStorage) RemoveNode(nodeID constants.NodeID) error {
-	r.Client.ZRem(r.nodeListKey(), string(nodeID))
+	r.Client.ZRem(context.Background(), r.nodeListKey(), string(nodeID))
 	return nil
 }
 
@@ -67,11 +79,11 @@ func (r *RedisStorage) RemoveNode(nodeID constants.NodeID) error {
 func (r *RedisStorage) PurgeNodeData(nodeID constants.NodeID) error {
 	// first remove any channel counts for this node:
 	log.Logger().Tracef("   ...... Deleting %s", r.channelCountKey(nodeID))
-	r.Client.Del(r.channelCountKey(nodeID))
+	r.Client.Del(context.Background(), r.channelCountKey(nodeID))
 
 	// now let's try to remove any presence channel data associated with this node
 	log.Logger().Tracef("   ...... Getting keys matching %s", r.presenceChannelKey("*"))
-	presenceChannelKeys := r.Client.Keys(r.presenceChannelKey("*")).Val()
+	presenceChannelKeys := r.Client.Keys(context.Background(), r.presenceChannelKey("*")).Val()
 
 	for _, channelKey := range presenceChannelKeys {
 		cursor := uint64(0)
@@ -79,7 +91,7 @@ func (r *RedisStorage) PurgeNodeData(nodeID constants.NodeID) error {
 		for {
 			log.Logger().Tracef("   ............ Scanning %s for %s", channelKey, fmt.Sprintf("node:%s:socket:*", nodeID))
 			// get all keys within the channel key, for the node
-			nodeKeys, cursor, err := r.Client.HScan(channelKey, cursor, fmt.Sprintf("node:%s:socket:*", nodeID), 0).Result()
+			nodeKeys, cursor, err := r.Client.HScan(context.Background(), channelKey, cursor, fmt.Sprintf("node:%s:socket:*", nodeID), 0).Result()
 			if err != nil {
 				log.Logger().Errorf("Error scanning channel %s: %s", channelKey, err)
 				break
@@ -91,7 +103,7 @@ func (r *RedisStorage) PurgeNodeData(nodeID constants.NodeID) error {
 				}
 
 				log.Logger().Tracef("   .................. Deleting hash key %s", nodeKey)
-				r.Client.HDel(channelKey, nodeKey)
+				r.Client.HDel(context.Background(), channelKey, nodeKey)
 			}
 
 			if cursor == 0 || len(nodeKeys) == 0 {
@@ -101,12 +113,11 @@ func (r *RedisStorage) PurgeNodeData(nodeID constants.NodeID) error {
 	}
 
 	// lastly, remove the node from the list of nodes
-	r.Client.ZRem(r.nodeListKey(), string(nodeID))
-	return nil
+	return r.RemoveNode(nodeID)
 }
 
 func (r *RedisStorage) GetAllNodes() ([]string, error) {
-	nodes, err := r.Client.ZRange(r.nodeListKey(), 0, -1).Result()
+	nodes, err := r.Client.ZRange(context.Background(), r.nodeListKey(), 0, -1).Result()
 	if err != nil {
 		return nil, err
 	}
@@ -116,26 +127,26 @@ func (r *RedisStorage) GetAllNodes() ([]string, error) {
 func (r *RedisStorage) SendNodeHeartbeat(nodeID constants.NodeID) *time.Time {
 	currentTime := time.Now()
 	currentTimestampInEpoch := float64(currentTime.Unix())
-	r.Client.ZAdd(r.nodeListKey(), redis.Z{Score: currentTimestampInEpoch, Member: string(nodeID)})
+	r.Client.ZAdd(context.Background(), r.nodeListKey(), redis.Z{Score: currentTimestampInEpoch, Member: string(nodeID)})
 	return &currentTime
 }
 
 func (r *RedisStorage) AddChannel(channel constants.ChannelName) error {
-	return r.Client.SAdd(r.channelListKey(), string(channel)).Err()
+	return r.Client.SAdd(context.Background(), r.channelListKey(), string(channel)).Err()
 }
 
 func (r *RedisStorage) RemoveChannel(channel constants.ChannelName) error {
 	// remove channel from the list of channels
-	_ = r.Client.SRem(r.channelListKey(), string(channel)).Err()
+	_ = r.Client.SRem(context.Background(), r.channelListKey(), string(channel)).Err()
 
 	// look for other channel keys that may need to be removed
 	if util.IsPresenceChannel(channel) {
-		r.Client.Del(r.presenceChannelKey(channel))
+		r.Client.Del(context.Background(), r.presenceChannelKey(channel))
 	} else {
 		// scan for each node's channel_count set, and remove the channel from each
-		nodes := r.Client.ZRange(r.nodeListKey(), 0, -1).Val()
+		nodes := r.Client.ZRange(context.Background(), r.nodeListKey(), 0, -1).Val()
 		for _, node := range nodes {
-			r.Client.HDel(r.channelCountKey(constants.NodeID(node)), string(channel))
+			r.Client.HDel(context.Background(), r.channelCountKey(constants.NodeID(node)), string(channel))
 		}
 	}
 	// TODO: Send vacated webhook
@@ -143,7 +154,7 @@ func (r *RedisStorage) RemoveChannel(channel constants.ChannelName) error {
 }
 
 func (r *RedisStorage) Channels() []constants.ChannelName {
-	members := r.Client.SMembers(r.channelListKey()).Val()
+	members := r.Client.SMembers(context.Background(), r.channelListKey()).Val()
 	channels := make([]constants.ChannelName, len(members))
 
 	for i, member := range members {
@@ -152,42 +163,42 @@ func (r *RedisStorage) Channels() []constants.ChannelName {
 	return channels
 }
 
-func (r *RedisStorage) AdjustChannelCount(nodeID constants.NodeID, channelName constants.ChannelName, countToAdd int64) error {
+func (r *RedisStorage) AdjustChannelCount(nodeID constants.NodeID, channelName constants.ChannelName, countToAdd int64) (newCount int64, err error) {
 	/*
 		•	Key: presence:channel_counts:{nodeId}
 		•	Type: Hash
 		•	Fields: each field is {channelName}, with the integer count as the value.
 	*/
 	channelCountKey := r.channelCountKey(nodeID)
-	newCount := r.Client.HIncrBy(channelCountKey, string(channelName), countToAdd)
-	if newCount.Err() != nil {
-		log.Logger().Errorf("Error incrementing channel count: %s", newCount.Err())
-		return newCount.Err()
+	newCountAfterIncr := r.Client.HIncrBy(context.Background(), channelCountKey, string(channelName), countToAdd)
+	if newCountAfterIncr.Err() != nil {
+		log.Logger().Errorf("Error incrementing channel count: %s", newCountAfterIncr.Err())
+		return 0, newCountAfterIncr.Err()
 	}
-	if newCount.Val() == 0 {
+	if newCountAfterIncr.Val() == 0 {
 		// if the count is 0, remove the channel from the hash
-		r.Client.HDel(channelCountKey, string(channelName))
+		r.Client.HDel(context.Background(), channelCountKey, string(channelName))
 	}
-	handleChannelCountChanges(channelName, newCount.Val(), countToAdd)
+	newCount = newCountAfterIncr.Val()
 
-	return nil
+	return
 }
 
 func (r *RedisStorage) GetChannelCount(channelName constants.ChannelName) int64 {
 	if util.IsPresenceChannel(channelName) {
 		channelKey := r.presenceChannelKey(channelName)
-		count, err := r.Client.HLen(channelKey).Result()
+		count, err := r.Client.HLen(context.Background(), channelKey).Result()
 		if err != nil {
 			return 0
 		}
 		return count
 	}
 
-	nodes := r.Client.ZRange(r.nodeListKey(), 0, -1).Val()
+	nodes := r.Client.ZRange(context.Background(), r.nodeListKey(), 0, -1).Val()
 	runningCount := int64(0)
 
 	for _, node := range nodes {
-		count, err := r.Client.HGet(r.channelCountKey(constants.NodeID(node)), string(channelName)).Int64()
+		count, err := r.Client.HGet(context.Background(), r.channelCountKey(constants.NodeID(node)), string(channelName)).Int64()
 		if err != nil {
 			continue
 		}
@@ -198,23 +209,17 @@ func (r *RedisStorage) GetChannelCount(channelName constants.ChannelName) int64 
 }
 
 func (r *RedisStorage) AddUserToPresence(nodeID constants.NodeID, channelName constants.ChannelName, socketID constants.SocketID, memberData pusherClient.MemberData) error {
-	/*
-		•	Key: presence:channels:{channelName}
-		•	Type: Hash
-		•	Members: node:{nodeId}:socket:{socketId} => {memberData}
-	*/
-	// HSET presence:channel:chat-room node:node1:socket:ABC '{"user_id":123,"name":"Alice"}'
 	channelKey := r.presenceChannelKey(channelName)
-	//memberValue := fmt.Sprintf("node:%s:socket:%s", nodeID, socketID)
+
 	memberValue := fmt.Sprintf("node:%s:socket:%s", nodeID, socketID)
 
-	memberDataBytes, merr := json.Marshal(memberData)
-	if merr != nil {
-		log.Logger().Errorf("Error marshalling member data: %s", merr)
-		return fmt.Errorf("error marshalling member data: %w", merr)
+	memberDataBytes, err := json.Marshal(memberData)
+	if err != nil {
+		log.Logger().Errorf("Error marshalling member data: %s", err)
+		return fmt.Errorf("error marshalling member data: %w", err)
 	}
 
-	r.Client.HSet(channelKey, memberValue, string(memberDataBytes))
+	r.Client.HSet(context.Background(), channelKey, memberValue, string(memberDataBytes))
 
 	// Note: we do not adjust the channel count for presence channels. When the count is needed, we just return the length of the hash.
 	return nil
@@ -223,11 +228,11 @@ func (r *RedisStorage) AddUserToPresence(nodeID constants.NodeID, channelName co
 func (r *RedisStorage) RemoveUserFromPresence(nodeID constants.NodeID, channelName constants.ChannelName, socketID constants.SocketID) error {
 	channelKey := r.presenceChannelKey(channelName)
 	memberValue := fmt.Sprintf("node:%s:socket:%s", nodeID, socketID)
-	r.Client.HDel(channelKey, memberValue)
+	r.Client.HDel(context.Background(), channelKey, memberValue)
 	return nil
 }
 
-// GetPresenceData returns the presence data for a given channel (list of users and their data).
+// GetPresenceData returns the presence data for a given channel and socketIDs for the current user (list of users and their data).
 func (r *RedisStorage) GetPresenceData(channelName constants.ChannelName, currentUser pusherClient.MemberData) ([]byte, []constants.SocketID, error) {
 	_presenceData := payloads.PresenceData{
 		IDs:   []string{},
@@ -236,7 +241,7 @@ func (r *RedisStorage) GetPresenceData(channelName constants.ChannelName, curren
 	}
 
 	channelKey := r.presenceChannelKey(channelName)
-	members, err := r.Client.HGetAll(channelKey).Result()
+	members, err := r.Client.HGetAll(context.Background(), channelKey).Result()
 	usersSocketIDs := make([]constants.SocketID, 0)
 	if err != nil {
 		log.Logger().Errorf("Error getting presence channel members: %s", err)
@@ -280,7 +285,7 @@ func (r *RedisStorage) GetPresenceDataForSocket(nodeID constants.NodeID, channel
 	channelKey := r.presenceChannelKey(channelName)
 	memberValue := fmt.Sprintf("node:%s:socket:%s", nodeID, socketID)
 
-	memberData, err := r.Client.HGet(channelKey, memberValue).Result()
+	memberData, err := r.Client.HGet(context.Background(), channelKey, memberValue).Result()
 	if err != nil {
 		return nil, err
 	}
@@ -301,7 +306,7 @@ func (r *RedisStorage) SocketDidHeartbeat(_ constants.NodeID, _ constants.Socket
 
 func (r *RedisStorage) Cleanup() {
 	// get nodes from list that have not sent a heartbeat in the last 15 seconds
-	oldNodes, zErr := r.Client.ZRangeByScore(r.nodeListKey(), redis.ZRangeBy{
+	oldNodes, zErr := r.Client.ZRangeByScore(context.Background(), r.nodeListKey(), &redis.ZRangeBy{
 		Min: "0",
 		Max: fmt.Sprintf("%d", time.Now().Add(-15*time.Second).Unix()),
 	}).Result()

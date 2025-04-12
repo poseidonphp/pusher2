@@ -1,17 +1,14 @@
 package internal
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/gorilla/websocket"
 	pusherClient "github.com/pusher/pusher-http-go/v5"
-	"pusher/internal/cache"
-	"pusher/internal/config"
 	"pusher/internal/constants"
-	"pusher/internal/dispatcher"
 	"pusher/internal/payloads"
-	"pusher/internal/storage"
 	"pusher/internal/util"
 	"pusher/log"
 	"sync"
@@ -19,6 +16,7 @@ import (
 )
 
 type Session struct {
+	hub              *Hub
 	conn             *websocket.Conn
 	client           string
 	version          string
@@ -30,12 +28,6 @@ type Session struct {
 	socketID         constants.SocketID
 	closed           bool
 	done             chan struct{} // when closed, will signal to other goroutines to exit
-}
-
-func (s *Session) CloseSession() {
-	s.Send(payloads.ErrPack(util.ErrCodeServerShuttingDown))
-	time.Sleep(500 * time.Millisecond) // give a little time to ensure the message sent before we close the connection
-	s.closeConnection(util.ErrCodeServerShuttingDown)
 }
 
 func (s *Session) handleReadMessageError(err error) {
@@ -57,7 +49,7 @@ func (s *Session) handleReadMessageError(err error) {
 // readerSubProcess reads incoming messages from the frontend client
 func (s *Session) readerSubProcess() {
 	defer func() {
-		log.Logger().Tracef("Closing readMessagesFromConnection() for %s", s.socketID)
+		s.Tracef("Closing readMessagesFromConnection() for %s", s.socketID)
 		s.closeConnection(util.ErrCodeGoRoutineExited)
 	}()
 
@@ -84,15 +76,16 @@ func (s *Session) readerSubProcess() {
 		}
 
 		// Just in case it needs it, let the storage manager know that this client is still alive
-		_ = storage.Manager.SocketDidHeartbeat(GlobalHub.nodeID, s.socketID, s.presenceChannels)
+		_ = s.hub.config.StorageManager.SocketDidHeartbeat(s.hub.nodeID, s.socketID, s.presenceChannels)
 	}
 }
 
-// senderSubProcess sends a message to the client
-func (s *Session) senderSubProcess() {
+// senderSubProcess monitors the sendChannel for new messages to send to the client.
+// When a new message comes in, it writes it to the connection using the write() method.
+func (s *Session) senderSubProcess(ctx context.Context) {
 	defer func() {
 		s.trace("Closing senderSubProcess()")
-		GlobalHub.unregister <- s
+		s.hub.unregister <- s
 		s.closeConnection(util.ErrCodeGoRoutineExited)
 	}()
 	s.trace("starting senderSubProcess()")
@@ -114,11 +107,14 @@ func (s *Session) senderSubProcess() {
 		case <-s.done:
 			s.trace("closing senderSubProcess() as a result of done channel")
 			return
+		case <-ctx.Done():
+			s.CloseSession()
+			return
 		}
 	}
 }
 
-// Send a message to the client
+// Send a message to the client by passing it into the sendChannel of the session, where it will be picked up by the senderSubProcess
 func (s *Session) Send(msg []byte) {
 	if s.sendChannel == nil || s.conn == nil || s.closed {
 		return
@@ -214,7 +210,7 @@ func (s *Session) handleUnsubscribeRequest(msgRaw []byte) *util.Error {
 	s.mutex.Unlock()
 
 	// Remove from hub
-	GlobalHub.removeSessionFromChannels(s, channel)
+	s.hub.removeSessionFromChannels(s, channel)
 	return nil
 }
 
@@ -246,7 +242,7 @@ func (s *Session) handleSubscribeRequest(msgRaw []byte) *util.Error {
 	s.mutex.Unlock()
 
 	// Get a struct for the channel, ensuring it exists on the hub
-	ch := GlobalHub.getOrCreateLocalChannel(channelObj)
+	ch := s.hub.getOrCreateLocalChannel(channelObj)
 
 	// Validate the auth token if the channel requires it
 	if channelObj.RequiresAuth {
@@ -263,7 +259,7 @@ func (s *Session) handleSubscribeRequest(msgRaw []byte) *util.Error {
 	// Made it this far, good to continue subscribing the user
 	if channelObj.Type == constants.ChannelTypePresence {
 		// get the member data for currently connected users
-		memberData, presenceErr := ValidatePresenceChannelRequirements(channel, subscribePayload.Data.ChannelData)
+		memberData, presenceErr := s.hub.ValidatePresenceChannelRequirements(channel, subscribePayload.Data.ChannelData)
 		if presenceErr != nil {
 			s.Send(payloads.ErrPack(presenceErr.Code))
 			return presenceErr
@@ -292,6 +288,8 @@ func (s *Session) removeChannelFromSubscriptions(channel constants.ChannelName) 
 	s.mutex.Unlock()
 }
 
+// confirmedChannelSubscription is called after the client attempt to subscribe to a channel has been validated.
+// This function will send the subscription_succeeded event to the client, and add the channel to the session's subscriptions.
 func (s *Session) confirmedChannelSubscription(channel *Channel, memberData *pusherClient.MemberData) {
 	s.Tracef("Confirmed subscription to channel: %s", channel.Name)
 	// add the channel to the sessions subscriptions
@@ -304,9 +302,9 @@ func (s *Session) confirmedChannelSubscription(channel *Channel, memberData *pus
 		}
 
 		// Get the current presence channel data from the hub, send to the user
-		presenceData, _, pErr := storage.Manager.GetPresenceData(channel.Name, *memberData)
+		presenceData, _, pErr := s.hub.config.StorageManager.GetPresenceData(channel.Name, *memberData)
 
-		GlobalHub.addPresenceUser(s.socketID, channel, *memberData)
+		s.hub.addPresenceUser(s.socketID, channel, *memberData)
 
 		if pErr != nil {
 			log.Logger().Errorf("Error marshalling presence data: %s", pErr)
@@ -322,7 +320,7 @@ func (s *Session) confirmedChannelSubscription(channel *Channel, memberData *pus
 	if channel.IsCache {
 		log.Logger().Tracef("This is a cache channel - do the needful")
 		// retrieve the data from the cache if it exists, otherwise send the cache_miss event
-		cachedData, exists := cache.ChannelCache.Get(string(channel.Name))
+		cachedData, exists := s.hub.config.ChannelCacheManager.Get(string(channel.Name))
 		if exists {
 			s.Send([]byte(cachedData))
 		} else {
@@ -335,16 +333,17 @@ func (s *Session) confirmedChannelSubscription(channel *Channel, memberData *pus
 				Channel: string(channel.Name),
 			}
 			//TODO Throttle the requests to only process the same cache_miss every x minutes (10?)
-			dispatcher.Dispatcher.Dispatch(webhookEvent)
+			s.hub.config.DispatchManager.Dispatch(webhookEvent)
 		}
 	} else {
 		log.Logger().Tracef("This is not a cache channel - do nothing (%s, %s, %t)", channel.Name, channel.Type, channel.IsCache)
 	}
 
 	// add the session to the channel on the hub
-	GlobalHub.addSessionToChannel(s, channel)
+	s.hub.addSessionToChannel(s, channel)
 }
 
+// handleClientEvent handles a client event sent to a channel
 func (s *Session) handleClientEvent(msgRaw []byte) *util.Error {
 	var clientChannelEvent payloads.ClientChannelEvent
 	err := json.Unmarshal(msgRaw, &clientChannelEvent)
@@ -387,39 +386,46 @@ func (s *Session) handleClientEvent(msgRaw []byte) *util.Error {
 	}
 
 	if util.IsPresenceChannel(channel) {
-		//presenceChannelData, getPresenceErr := GlobalHub.getPresenceMemberDataForSocket(channel, s.socketID)
-		presenceChannelData, getPresenceErr := storage.Manager.GetPresenceDataForSocket(GlobalHub.nodeID, channel, s.socketID)
+		presenceChannelData, getPresenceErr := s.hub.config.StorageManager.GetPresenceDataForSocket(GlobalHub.nodeID, channel, s.socketID)
 		if getPresenceErr != nil {
 			return util.NewUnknownError(getPresenceErr.Error())
 		}
-		//hookEvent.UserID = presenceChannelData.UserID
 
 		eventForm.UserID = presenceChannelData.UserID
 		webhookEvent.UserID = presenceChannelData.UserID
 	}
-	_ = GlobalHub.PublishChannelEventGlobally(eventForm)
+	_ = s.hub.PublishChannelEventGlobally(eventForm)
 
 	// Dispatch the webhook for this event; no need to check for flapping
-	dispatcher.Dispatcher.Dispatch(webhookEvent)
+	s.hub.config.DispatchManager.Dispatch(webhookEvent)
 
 	return nil
 }
 
+// resetReadTimeout resets the read timeout for the connection. If this time expires, the connection is automatically closed.
+// if the connection closes, it triggers the readerSubProcess to stop, which will trigger the remaining session cleanup
 func (s *Session) resetReadTimeout() {
 	// set the read deadline
-	e := s.conn.SetReadDeadline(time.Now().Add(config.ReadTimeout))
+	e := s.conn.SetReadDeadline(time.Now().Add(s.hub.config.ReadTimeout))
 	if e != nil {
 		s.errorf("Error setting read deadline: %s", e)
 	}
 }
 
-//func (s *Session) resetPongTimeout() {
-//	_ = s.conn.SetReadDeadline(time.Now().Add(config.PongTimeout))
-//}
+// CloseSession sends a closure message to the client, and then closes the open connection
+func (s *Session) CloseSession() {
+	s.trace("Closing session using the CloseSession() with timer function")
+	s.Send(payloads.ErrPack(util.ErrCodeServerShuttingDown))
+	time.Sleep(600 * time.Millisecond) // give a little time to ensure the message sent before we close the connection
+	s.closeConnection(util.ErrCodeServerShuttingDown)
+}
 
+// closeConnection closes the connection to the client, cancels the reader and sender subprocess, and unregisters the session with the hub
 func (s *Session) closeConnection(errorCode util.ErrorCode) {
 	// if the client connection is still open, close it
+	s.trace("Called closeConnection()")
 	if s.conn != nil {
+		// close the connection; this will trigger the readSubProcess function to stop
 		_ = s.conn.Close()
 		s.conn = nil
 	}
@@ -430,28 +436,28 @@ func (s *Session) closeConnection(errorCode util.ErrorCode) {
 	}
 
 	s.closed = true
+
+	// close the done channel. If the senderSubProcess is still running, this will trigger it to end
 	close(s.done)
 
 	// call the removeSessionFromChannels
 	if !errors.Is(errorCode, util.ErrCodeServerShuttingDown) {
-		GlobalHub.removeSessionFromChannels(s)
-		GlobalHub.unregister <- s
+		s.hub.removeSessionFromChannels(s)
+		s.hub.unregister <- s
 	}
-
 }
 
+// Tracef logs a message at the Trace level including the socket ID of the session
 func (s *Session) Tracef(format string, args ...any) {
 	log.Logger().Tracef(fmt.Sprintf("[%s]  ", s.socketID)+format, args...)
 }
 
+// trace logs a message at the Trace level including the socket ID of the session
 func (s *Session) trace(message string) {
 	log.Logger().Tracef("[%s]  %s", s.socketID, message)
 }
 
+// errorf logs a message at the Error level including the socket ID of the session
 func (s *Session) errorf(format string, args ...any) {
 	log.Logger().Errorf(fmt.Sprintf("[%s]  ", s.socketID)+format, args...)
 }
-
-//func (s *Session) error(message string) {
-//	log.Logger().Errorf("[%s]  %s", s.socketID, message)
-//}

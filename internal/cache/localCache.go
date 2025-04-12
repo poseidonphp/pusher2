@@ -15,13 +15,26 @@ type LocalCache struct {
 	mu         sync.Mutex
 }
 
-func (l *LocalCache) cleanupJob() {
-	// this should run as a goroutine and clean up expired items
-}
-
 func (l *LocalCache) Init() error {
 	l.cacheItems = make(map[string]*localCacheItem)
+	go l.cleanupJob()
 	return nil
+}
+
+func (l *LocalCache) cleanupJob() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		l.mu.Lock()
+		now := time.Now()
+		for key, item := range l.cacheItems {
+			if item.expireAt != nil && now.After(*item.expireAt) {
+				delete(l.cacheItems, key)
+			}
+		}
+		l.mu.Unlock()
+	}
 }
 
 func (l *LocalCache) existsAndNotExpired(key string) (exists bool, item *localCacheItem) {
@@ -31,7 +44,6 @@ func (l *LocalCache) existsAndNotExpired(key string) (exists bool, item *localCa
 		if item.expireAt == nil || time.Now().Before(*item.expireAt) {
 			return true, item
 		}
-		l.Delete(key) // if expired, delete the item
 	}
 	return false, nil
 }
@@ -65,7 +77,7 @@ func (l *LocalCache) Delete(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if _, exists := l.cacheItems[key]; exists {
-		l.Delete(key)
+		delete(l.cacheItems, key)
 	}
 }
 

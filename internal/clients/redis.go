@@ -1,21 +1,20 @@
 package clients
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
-	"github.com/go-redis/redis"
-	"pusher/env"
-	"pusher/log"
 	"strings"
 	"sync"
+
+	"github.com/redis/go-redis/v9"
+	"pusher/log"
 )
 
 type RedisClient struct {
-	client redis.UniversalClient
+	Client redis.UniversalClient
 	Prefix string
 }
-
-var RedisClientInstance *RedisClient
 
 var redisOnce sync.Once
 
@@ -24,13 +23,13 @@ func (r *RedisClient) GetKey(key string) string {
 }
 
 func (r *RedisClient) GetClient() redis.UniversalClient {
-	if r.client == nil {
-		log.Logger().Errorln("Redis client is not initialized")
+	if r.Client == nil {
+		log.Logger().Errorln("Redis Client is not initialized")
 	}
-	return r.client
+	return r.Client
 }
 
-func (r *RedisClient) initRedisClient(redisURL string) error {
+func (r *RedisClient) initRedisClient(redisURL string, useTls bool) error {
 	redisOptions, err := redis.ParseURL(redisURL)
 	if err != nil {
 		return err
@@ -42,21 +41,21 @@ func (r *RedisClient) initRedisClient(redisURL string) error {
 		PoolSize:    redisOptions.PoolSize,
 		PoolTimeout: redisOptions.PoolTimeout,
 	}
-	if env.GetBool("USE_TLS", false) {
+	if useTls {
 		universalOptions.TLSConfig = &tls.Config{
 			MinVersion: tls.VersionTLS12,
 		}
 	}
-	r.client = redis.NewUniversalClient(universalOptions)
+	r.Client = redis.NewUniversalClient(universalOptions)
 
-	_, err = r.client.Ping().Result()
+	_, err = r.Client.Ping(context.Background()).Result()
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (r *RedisClient) initClusterRedisClient(redisURLs []string) error {
+func (r *RedisClient) initClusterRedisClient(redisURLs []string, useTls bool) error {
 	var err error
 	var nodes []string
 	var redisOptions *redis.Options
@@ -77,41 +76,39 @@ func (r *RedisClient) initClusterRedisClient(redisURLs []string) error {
 		PoolSize:    redisOptions.PoolSize,
 		PoolTimeout: redisOptions.PoolTimeout,
 	}
-	if env.GetBool("USE_TLS", false) {
+	if useTls {
 		universalOptions.TLSConfig = &tls.Config{
 			MinVersion: tls.VersionTLS12,
 		}
 	}
-	r.client = redis.NewUniversalClient(universalOptions)
+	r.Client = redis.NewUniversalClient(universalOptions)
 
-	_, err = r.client.Ping().Result()
+	_, err = r.Client.Ping(context.Background()).Result()
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (r *RedisClient) InitRedis(prefix string) error {
-	if r.client == nil {
-		redisOnce.Do(func() {
-			redisURLs := strings.Split(env.GetString("REDIS_URL", "redis://localhost:6379"), ",")
-			if len(redisURLs) > 1 || env.GetBool("REDIS_CLUSTER", false) {
-				err := r.initClusterRedisClient(redisURLs)
-				if err != nil {
-					log.Logger().Fatal(err)
-				}
-			} else {
-				err := r.initRedisClient(redisURLs[0])
-				if err != nil {
-					log.Logger().Fatal(err)
-				}
+func (r *RedisClient) InitRedis(redisUrl string, redisCluster bool, useTls bool) error {
+	if r.Client == nil {
+		// redisOnce.Do(func() {
+		redisURLs := strings.Split(redisUrl, ",")
+		if len(redisURLs) > 1 || redisCluster {
+			err := r.initClusterRedisClient(redisURLs, useTls)
+			if err != nil {
+				return err
+				// log.Logger().Fatal(err)
 			}
-		})
+		} else {
+			err := r.initRedisClient(redisURLs[0], useTls)
+			if err != nil {
+				return err
+				// log.Logger().Fatal(err)
+			}
+		}
+		// })
 	}
-	if prefix == "" {
-		r.Prefix = "pusher"
-	} else {
-		r.Prefix = strings.Trim(prefix, " ")
-	}
+
 	return nil
 }

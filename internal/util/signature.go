@@ -2,33 +2,33 @@ package util
 
 import (
 	"crypto/hmac"
-	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"net/http"
 	"net/url"
-	"pusher/env"
 	"sort"
 	"strings"
 	"time"
+
+	"pusher/log"
 )
 
 // Verify signature
 // @doc https://pusher.com/docs/channels/library_auth_reference/rest-api#authentication
-func Verify(r *http.Request) (bool, error) {
+func Verify(r *http.Request, appID string, appSecret string) (bool, error) {
 	query := r.URL.Query()
-
+	log.Logger().Debugf("Verifying appId: %s", appID)
 	if !checkVersion(query.Get("auth_version")) {
 		return false, errors.New("invalid version")
 	}
 
-	//queryString := prepareQueryString(query)
-	//stringToSign := strings.Join([]string{strings.ToUpper(r.Method), r.URL.Path, queryString}, "\n")
-	//fmt.Println("String to sign: ", stringToSign)
+	// queryString := prepareQueryString(query)
+	// stringToSign := strings.Join([]string{strings.ToUpper(r.Method), r.URL.Path, queryString}, "\n")
+	// fmt.Println("String to sign: ", stringToSign)
 
 	timestamp, _ := Str2Int64(query.Get("auth_timestamp"))
-	if !checkTimestamp(timestamp, env.GetInt64("TIMESTAMP_GRACE", 600)) {
+	if !checkTimestamp(timestamp, 600) {
 		return false, errors.New("invalid timestamp")
 	}
 
@@ -36,7 +36,8 @@ func Verify(r *http.Request) (bool, error) {
 	query.Del("auth_signature")
 	queryString := prepareQueryString(query)
 	stringToSign := strings.Join([]string{strings.ToUpper(r.Method), r.URL.Path, queryString}, "\n")
-	return HmacSignature(stringToSign, env.GetString("APP_SECRET", "")) == signature, nil
+
+	return HmacSignature(stringToSign, appSecret) == signature, nil
 }
 
 func checkVersion(version string) bool {
@@ -44,13 +45,15 @@ func checkVersion(version string) bool {
 }
 
 func checkTimestamp(timestamp, grace int64) bool {
-	return (time.Now().Unix() - timestamp) < grace
+	now := time.Now().Unix()
+	// allow 5 seconds onto the check for future timestamps to account for possible clock skew
+	return (now-timestamp) < grace && (now+5) >= timestamp
 }
 
 //nolint:unused // not used yet
-func checkBodyMD5(toSign []byte, md5Str string) bool {
-	return md5Hex(toSign) == md5Str
-}
+// func checkBodyMD5(toSign []byte, md5Str string) bool {
+// 	return md5Hex(toSign) == md5Str
+// }
 
 func prepareQueryString(params url.Values) string {
 	var keys []string
@@ -79,8 +82,8 @@ func HmacSignature(toSign, secret string) string {
 }
 
 //nolint:unused // not used yet
-func md5Hex(toSign []byte) string {
-	h := md5.New()
-	h.Write(toSign)
-	return hex.EncodeToString(h.Sum(nil))
-}
+// func md5Hex(toSign []byte) string {
+// 	h := md5.New()
+// 	h.Write(toSign)
+// 	return hex.EncodeToString(h.Sum(nil))
+// }

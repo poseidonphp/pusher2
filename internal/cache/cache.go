@@ -2,8 +2,6 @@ package cache
 
 import "time"
 
-var ChannelCache CacheContract
-
 type CacheContract interface {
 	Init() error
 	Get(key string) (string, bool)

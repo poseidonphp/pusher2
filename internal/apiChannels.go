@@ -1,11 +1,11 @@
-package api
+package internal
 
 import (
 	"github.com/gin-gonic/gin"
 	pusherClient "github.com/pusher/pusher-http-go/v5"
 	"github.com/thoas/go-funk"
 	"net/http"
-	"pusher/internal/cache"
+	"pusher/internal/config"
 	"pusher/internal/constants"
 	"pusher/internal/storage"
 	"pusher/internal/util"
@@ -13,7 +13,7 @@ import (
 	"strings"
 )
 
-func ChannelIndex(c *gin.Context) {
+func ChannelIndex(c *gin.Context, serverConfig *config.ServerConfig) {
 	filterByPrefix := c.Query("filter_by_prefix")
 	info := c.Query("info")
 
@@ -33,7 +33,8 @@ func ChannelIndex(c *gin.Context) {
 		return
 	}
 
-	channels := storage.Manager.Channels()
+	// channels := storage.Manager.Channels()
+	channels := serverConfig.StorageManager.Channels()
 	log.Logger().Tracef("Getting channels list: %v", channels)
 
 	data := pusherClient.ChannelsList{
@@ -47,9 +48,9 @@ func ChannelIndex(c *gin.Context) {
 		}
 		var count int
 		if util.IsPresenceChannel(channel) {
-			count = len(storage.PresenceChannelUserIDs(channel))
+			count = len(storage.PresenceChannelUserIDs(serverConfig.StorageManager, channel))
 		} else {
-			count = int(storage.Manager.GetChannelCount(channel))
+			count = int(serverConfig.StorageManager.GetChannelCount(channel))
 		}
 		if count > 0 {
 			item := &pusherClient.ChannelListItem{}
@@ -63,7 +64,7 @@ func ChannelIndex(c *gin.Context) {
 	c.JSON(http.StatusOK, data)
 }
 
-func ChannelShow(c *gin.Context) {
+func ChannelShow(c *gin.Context, serverConfig *config.ServerConfig) {
 	channel := constants.ChannelName(c.Param("channel_name"))
 	info := c.Query("info")
 
@@ -72,8 +73,6 @@ func ChannelShow(c *gin.Context) {
 	}
 	infoFields := strings.FieldsFunc(info, splitFn)
 
-	//data := make(map[string]interface{})
-	//data := &pusherClient.Channel{Name: string(channel)}
 	data := &struct {
 		pusherClient.Channel
 		Cache string `json:"cache,omitempty"`
@@ -81,11 +80,11 @@ func ChannelShow(c *gin.Context) {
 
 	data.Name = string(channel)
 
-	subscriptionsCount := storage.Manager.GetChannelCount(channel)
+	subscriptionsCount := serverConfig.StorageManager.GetChannelCount(channel)
 	data.Occupied = subscriptionsCount > 0
 
 	if funk.Contains(infoFields, "user_count") && util.IsPresenceChannel(channel) {
-		data.UserCount = len(storage.PresenceChannelUserIDs(channel))
+		data.UserCount = len(storage.PresenceChannelUserIDs(serverConfig.StorageManager, channel))
 	}
 
 	if funk.Contains(infoFields, "subscription_count") {
@@ -93,7 +92,7 @@ func ChannelShow(c *gin.Context) {
 	}
 
 	if funk.Contains(infoFields, "cache") && util.IsCacheChannel(channel) {
-		cachedData, exists := cache.ChannelCache.Get(string(channel))
+		cachedData, exists := serverConfig.ChannelCacheManager.Get(string(channel))
 		if exists {
 			data.Cache = cachedData
 		}
@@ -102,7 +101,7 @@ func ChannelShow(c *gin.Context) {
 	c.JSON(http.StatusOK, data)
 }
 
-func ChannelUsers(c *gin.Context) {
+func ChannelUsers(c *gin.Context, serverConfig *config.ServerConfig) {
 	if c.Param("channel_name") == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "channel name required"})
 		return
@@ -115,7 +114,7 @@ func ChannelUsers(c *gin.Context) {
 		return
 	}
 
-	_userIds := storage.PresenceChannelUserIDs(channel)
+	_userIds := storage.PresenceChannelUserIDs(serverConfig.StorageManager, channel)
 
 	data := pusherClient.Users{List: make([]pusherClient.User, 0)}
 

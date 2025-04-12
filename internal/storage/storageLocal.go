@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	pusherClient "github.com/pusher/pusher-http-go/v5"
 	"pusher/internal/constants"
 	"pusher/internal/payloads"
@@ -21,27 +22,23 @@ type StandaloneStorageManager struct {
 	channelCounts    map[constants.ChannelName]map[constants.NodeID]int64
 	mutex            sync.RWMutex
 	commChannel      chan pubsub.ServerMessage
+	Pubsub           pubsub.PubSubManagerContract
 }
 
 // *********** NON-INTERFAFCE METHODS ***********
 
-// Init initializes the StandaloneStorageManager
-func (s *StandaloneStorageManager) Init() error {
-	s.listOfNodes = make(map[constants.NodeID]int64)
-	s.presenceChannels = make(map[constants.ChannelName]map[constants.NodeID]map[constants.SocketID]pusherClient.MemberData)
-	s.channelCounts = make(map[constants.ChannelName]map[constants.NodeID]int64)
-	s.commChannel = make(chan pubsub.ServerMessage)
-
-	//go pubsub.PubSubManager.Subscribe(commChannelName, s.commChannel)
-	return nil
-}
-
-func (s *StandaloneStorageManager) ListenForMessages() {
+func (s *StandaloneStorageManager) listenForMessages() {
+	if s.Pubsub == nil {
+		log.Logger().Error("PubSubManager is not initialized")
+		return
+	}
 	defer func() {
 		log.Logger().Warn("Exiting local storage message listener")
 	}()
 	log.Logger().Traceln("Listening for messages on local storage channel")
-	go pubsub.PubSubManager.Subscribe(commChannelName, s.commChannel)
+	subReady := make(chan struct{})
+	go s.Pubsub.SubscribeWithNotify(context.Background(), commChannelName, s.commChannel, subReady)
+	<-subReady
 	for {
 		select {
 		case msg := <-s.commChannel:
@@ -70,16 +67,31 @@ func (s *StandaloneStorageManager) updateNodeHeartbeat(nodeID constants.NodeID) 
 
 // *********** INTERFACE-SPECIFIC METHODS ***********
 
+// Init initializes the StandaloneStorageManager
+func (s *StandaloneStorageManager) Init() error {
+	s.listOfNodes = make(map[constants.NodeID]int64)
+	s.presenceChannels = make(map[constants.ChannelName]map[constants.NodeID]map[constants.SocketID]pusherClient.MemberData)
+	s.channelCounts = make(map[constants.ChannelName]map[constants.NodeID]int64)
+	s.commChannel = make(chan pubsub.ServerMessage)
+	if s.Pubsub == nil {
+		log.Logger().Error("PubSubManager is not initialized")
+		return errors.New("PubSubManager is not initialized in StandaloneStorageManager")
+	}
+	return nil
+}
+
+// Start the storage manager
 func (s *StandaloneStorageManager) Start() {
-	// Use a WaitGroup to track goroutines
-	var wg sync.WaitGroup
-	wg.Add(1)
+	//// Use a WaitGroup to track goroutines
+	//var wg sync.WaitGroup
+	//wg.Add(1)
 
-	go func() {
-		defer wg.Done()
-		s.ListenForMessages()
-	}()
+	//go func() {
+	//defer wg.Done()
+	//s.listenForMessages()
+	//}()
 
+	go s.listenForMessages()
 }
 
 func (s *StandaloneStorageManager) AddNewNode(nodeID constants.NodeID) error {
@@ -104,18 +116,46 @@ func (s *StandaloneStorageManager) RemoveNode(nodeID constants.NodeID) error {
 	return nil
 }
 
-func (s *StandaloneStorageManager) PurgeNodeData(_ constants.NodeID) error {
-	//TODO implement me
-	return nil
+// PurgeNodeData removes a node from the list of nodes, and clears any channel data associated with the node.
+// This process can be time-consuming if there are many channels (ie one per user with a lot of users).
+func (s *StandaloneStorageManager) PurgeNodeData(nodeToPurge constants.NodeID) error {
+	// first remove any channel counts for this node
+	s.mutex.Lock()
+
+nodeCountsLoop:
+	for _, nodeCounts := range s.channelCounts {
+		for nodeID, _ := range nodeCounts {
+			if nodeID == nodeToPurge {
+				delete(nodeCounts, nodeID)
+				break nodeCountsLoop
+			}
+		}
+	}
+
+	// now remove any presence data for this node
+nodeDataLoop:
+	for _, nodeData := range s.presenceChannels {
+		for nodeID, _ := range nodeData {
+			if nodeID == nodeToPurge {
+				delete(nodeData, nodeID)
+				break nodeDataLoop
+			}
+		}
+	}
+	s.mutex.Unlock()
+	return s.RemoveNode(nodeToPurge)
 }
 
 func (s *StandaloneStorageManager) GetAllNodes() ([]string, error) {
-	nodeList := make([]string, len(s.listOfNodes))
+	nodeList := make([]string, 0)
 
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
 	for nodeID := range s.listOfNodes {
+		if nodeID == "" {
+			continue
+		}
 		nodeList = append(nodeList, string(nodeID))
 	}
 	return nodeList, nil
@@ -131,7 +171,7 @@ func (s *StandaloneStorageManager) SendNodeHeartbeat(nodeID constants.NodeID) *t
 	currentTime := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	pErr := pubsub.PubSubManager.Publish(ctx, commChannelName, _msg)
+	pErr := s.Pubsub.Publish(ctx, commChannelName, _msg)
 	if pErr != nil {
 		log.Logger().Errorf("Error publishing heartbeat message: %v", pErr)
 		return nil
@@ -187,7 +227,7 @@ func (s *StandaloneStorageManager) Channels() []constants.ChannelName {
 	return channelList
 }
 
-func (s *StandaloneStorageManager) AdjustChannelCount(nodeID constants.NodeID, channelName constants.ChannelName, countToAdd int64) error {
+func (s *StandaloneStorageManager) AdjustChannelCount(nodeID constants.NodeID, channelName constants.ChannelName, countToAdd int64) (newCount int64, err error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -196,8 +236,10 @@ func (s *StandaloneStorageManager) AdjustChannelCount(nodeID constants.NodeID, c
 	}
 	s.channelCounts[channelName][nodeID] += countToAdd
 
-	handleChannelCountChanges(channelName, s.channelCounts[channelName][nodeID], countToAdd)
-	return nil
+	newCount = s.channelCounts[channelName][nodeID]
+
+	//s.handleChannelCountChanges(channelName, newCount, countToAdd)
+	return
 }
 
 // GetChannelCount returns the count of subscribers for a channel (not unique to user ids)
@@ -235,7 +277,6 @@ func (s *StandaloneStorageManager) AddUserToPresence(nodeID constants.NodeID, ch
 	}
 
 	s.presenceChannels[channelName][nodeID][socketID] = memberData
-	//newCount := int64(len(s.presenceChannels[channelName][nodeID]))
 
 	return nil
 }
@@ -253,6 +294,7 @@ func (s *StandaloneStorageManager) RemoveUserFromPresence(nodeID constants.NodeI
 	return nil
 }
 
+// GetPresenceData returns the presence data for a given channel and socketIDs for the current user (list of users and their data).
 func (s *StandaloneStorageManager) GetPresenceData(channelName constants.ChannelName, currentUser pusherClient.MemberData) ([]byte, []constants.SocketID, error) {
 	_presenceData := payloads.PresenceData{
 		Count: 0,
@@ -266,8 +308,10 @@ func (s *StandaloneStorageManager) GetPresenceData(channelName constants.Channel
 	usersSocketIDs := make([]constants.SocketID, 0)
 
 	// append the current user, since they are likely not in the list yet
-	_presenceData.Hash[currentUser.UserID] = currentUser.UserInfo
-	_presenceData.IDs = append(_presenceData.IDs, currentUser.UserID)
+	if currentUser.UserID != "" {
+		_presenceData.Hash[currentUser.UserID] = currentUser.UserInfo
+		_presenceData.IDs = append(_presenceData.IDs, currentUser.UserID)
+	}
 
 	for _, nodeData := range s.presenceChannels[channelName] {
 		for socketId, memberData := range nodeData {
@@ -296,7 +340,7 @@ func (s *StandaloneStorageManager) GetPresenceDataForSocket(nodeID constants.Nod
 			}
 		}
 	}
-	return nil, nil
+	return nil, errors.New("socket not found")
 }
 
 func (s *StandaloneStorageManager) SocketDidHeartbeat(_ constants.NodeID, _ constants.SocketID, _ map[constants.ChannelName]constants.ChannelName) error {

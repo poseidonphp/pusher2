@@ -13,11 +13,14 @@ import (
 // This is a local dispatcher - it will dispatch all messages in realtime
 
 type SyncDispatcher struct {
+	DispatcherCore
 	incomingMessages chan pusher.WebhookEvent
+	WebhookManager   webhooks.WebhookContract
 }
 
-func (sd *SyncDispatcher) Init() {
+func (sd *SyncDispatcher) Init() error {
 	sd.incomingMessages = make(chan pusher.WebhookEvent, 100)
+	return nil
 }
 
 func (sd *SyncDispatcher) Dispatch(serverEvent pusher.WebhookEvent) {
@@ -44,12 +47,12 @@ func (sd *SyncDispatcher) ListenForEvents(ctx context.Context) {
 				Events: []pusher.WebhookEvent{serverEvent},
 			}
 
-			sErr := webhooks.WebhookManager.Send(*wh)
+			sErr := sd.WebhookManager.Send(*wh)
 			if sErr != nil {
 				log.Logger().Errorf("Error sending webhook: %s", sErr)
 			}
 		case <-ctx.Done():
-			log.Logger().Infoln("Stopping local dispatcher due to context cancellation")
+			log.Logger().Debugln("Stopping local dispatcher due to context cancellation")
 			return
 		}
 	}

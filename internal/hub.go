@@ -8,9 +8,7 @@ import (
 	"github.com/google/uuid"
 	pusherClient "github.com/pusher/pusher-http-go/v5"
 	"github.com/thoas/go-funk"
-	"pusher/env"
-	"pusher/internal/cache"
-	"pusher/internal/clients"
+	"pusher/internal/config"
 	"pusher/internal/dispatcher"
 	"pusher/internal/pubsub"
 	"pusher/internal/storage"
@@ -23,55 +21,26 @@ import (
 	"time"
 )
 
-/*
-globalChannels json representation: the counts are the number of users in the channel
-{
-	"channel1": {
-		"node1": 50,
-		"node2": 100,
-	},
-}
-
-presenceChannels json representation: the values are the user data (pusherClient.MemberData)
-{
-	"channel1": {
-		"node1": {
-			"socket1": {
-				"user_id": "user1",
-				"user_info": {
-					"name": "John Doe",
-					"email": "jon@doe.com",
-				},
-			},
-		}
-	}
-}
-*/
-
 var GlobalHub *Hub
 
 var LastHeartbeat atomic.Value
 
 type Hub struct {
-	nodeID constants.NodeID
-
+	nodeID                  constants.NodeID
 	acceptingNewConnections bool
-	stopChan                chan struct{}
-
-	// localChannels stores the sockets that are subscribed to channels on this node
-	localChannels map[constants.ChannelName]*Channel
-
-	// sessions store all sessions connected to this instance
-	sessions map[constants.SocketID]*Session
-
-	broadcast     chan []byte
-	register      chan *Session // channel to handle connecting new sessions
-	unregister    chan *Session // channel to handle disconnecting sessions
-	server2server chan pubsub.ServerMessage
-	mutex         sync.Mutex
-	pubsubManager *pubsub.PubSubManagerContract
-
+	ctx                     context.Context
+	cancel                  context.CancelFunc
+	config                  *config.ServerConfig
+	localChannels           map[constants.ChannelName]*Channel // stores the sockets that are subscribed to channels on this node
+	sessions                map[constants.SocketID]*Session    // store all sessions connected to this instance
+	broadcast               chan []byte
+	register                chan *Session // channel to handle connecting new sessions
+	unregister              chan *Session // channel to handle disconnecting sessions
+	server2server           chan pubsub.ServerMessage
+	mutex                   sync.Mutex
+	pubsubManager           *pubsub.PubSubManagerContract
 	cleanerPromotionChannel chan pubsub.ServerMessage
+	// stopChan                chan struct{}
 }
 
 // MessageToClient is a struct to send messages to the client - TESTING instead of using individual go routines on each session
@@ -80,12 +49,14 @@ type MessageToClient struct {
 	Message []byte
 }
 
-func NewHub() *Hub {
+func NewHub(ctx context.Context, serverConfig *config.ServerConfig) *Hub {
 	newUuid := uuid.New().String()
-
+	hubCtx, hubCancel := context.WithCancel(ctx)
 	hub := &Hub{
+		ctx:                     hubCtx,
+		cancel:                  hubCancel,
+		config:                  serverConfig,
 		acceptingNewConnections: true,
-		stopChan:                make(chan struct{}),
 		nodeID:                  constants.NodeID(fmt.Sprintf("%s%s", newUuid[0:4], newUuid[len(newUuid)-4:])),
 		localChannels:           make(map[constants.ChannelName]*Channel),
 		sessions:                make(map[constants.SocketID]*Session),
@@ -96,110 +67,66 @@ func NewHub() *Hub {
 		cleanerPromotionChannel: make(chan pubsub.ServerMessage),
 	}
 
-	pubSubManagerDriver := env.GetString("PUBSUB_MANAGER", "local")
-	storageManagerDriver := env.GetString("STORAGE_MANAGER", "local")
-	channelCacheManagerDriver := env.GetString("CHANNEL_CACHE_MANAGER", "local")
-
-	if (pubSubManagerDriver == "redis" || storageManagerDriver == "redis" || channelCacheManagerDriver == "redis") && clients.RedisClientInstance == nil {
-		rc := &clients.RedisClient{}
-		rErr := rc.InitRedis(env.GetString("REDIS_PREFIX", "pusher"))
-		if rErr != nil {
-			log.Logger().Fatal(rErr)
-		}
-		clients.RedisClientInstance = rc
-	}
-
-	// Initialize the global PubSub Manager, used for broadcasting messages to all nodes
-	hub.initializePubSubManager(pubSubManagerDriver)
-
-	// Initialize the global Storage Manager, used for storing channel counts and presence data
-	hub.initializeStorageManager(storageManagerDriver)
-
-	// Initialize the global Dispatcher, used for dispatching webhooks
-	//hub.initializeDispatcher(dispatchManagerDriver, redisClient)
-
-	hub.initializeCacheManager(channelCacheManagerDriver)
-
 	GlobalHub = hub
-
-	// Register the node with the storage manager
-	nErr := storage.Manager.AddNewNode(hub.nodeID)
-	if nErr != nil {
-		log.Logger().Fatal(nErr)
-	}
 
 	return hub
 }
 
-func (h *Hub) initializeCacheManager(cacheManagerDriver string) {
-	var cacheInstance cache.CacheContract
-	switch cacheManagerDriver {
-	case "redis":
-		cacheInstance = &cache.RedisCache{}
-	case "local":
-		cacheInstance = &cache.LocalCache{}
-	default:
-		log.Logger().Fatal("Unsupported cache manager")
-		return
-	}
-	log.Logger().Debugf("Initializing %s cache driver", cacheManagerDriver)
-	err := cacheInstance.Init()
-	if err != nil {
-		log.Logger().Fatalf("Error initializing %s cache: %v", cacheManagerDriver, err)
-	}
-	cache.ChannelCache = cacheInstance
-}
+// Run starts the hub. This is the core function for managing all websocket connections
+func (h *Hub) Run() {
+	log.Logger().Infoln("Starting the hub")
 
-func (h *Hub) initializeStorageManager(storageManagerDriver string) {
-	switch storageManagerDriver {
-	case "redis":
-		storage.Manager = &storage.RedisStorage{
-			Client:    clients.RedisClientInstance.GetClient(),
-			KeyPrefix: env.GetString("REDIS_PREFIX", "pusher"),
+	// Register the node with the storage manager
+	nErr := h.config.StorageManager.AddNewNode(h.nodeID)
+	if nErr != nil {
+		log.Logger().Fatal(nErr)
+	}
+
+	// Subscribe to the pubsub channel for server-to-server messages
+	subReady := make(chan struct{})
+	go h.config.PubSubManager.SubscribeWithNotify(h.ctx, constants.SocketRushInternalChannel, h.server2server, subReady) // route incoming messages from pubsub to the server2server channel
+	<-subReady                                                                                                           // wait for the subscription to complete
+
+	// Start the storage manager
+	go h.config.StorageManager.Start()
+
+	// Start the background cleaner process
+	// time.Sleep(1 * time.Second) // wait for the storage manager to start
+
+	// Start the heartbeat broadcast - this sends out its own heartbeat and checks for other nodes
+	go h.broadcastHeartbeat()
+	go h.monitorHeartbeat()
+
+	// Star the cleaner process for removing stale nodes
+	go h.startCleaner()
+
+	// start listening for hub activity
+	for {
+		select {
+		case msg := <-h.server2server:
+			h.handleServerToServerIncoming(msg)
+		case session := <-h.register:
+			log.Logger().Tracef("[%s]  Hub: Registering new socket id: %s\n", session.socketID, session.socketID)
+			h.mutex.Lock()
+			h.sessions[session.socketID] = session
+			h.mutex.Unlock()
+			log.Logger().Tracef("[%s]  Hub: Registered new socket id: %s\n", session.socketID, session.socketID)
+		case session := <-h.unregister:
+			h.mutex.Lock()
+			delete(h.sessions, session.socketID)
+			h.mutex.Unlock()
+			// TODO: replace with cleanSession() logic
+		case <-h.ctx.Done():
+			log.Logger().Infoln("... Stopping the hub due to shutdown signal")
+			time.Sleep(1 * time.Second)
+			return
 		}
-	case "local":
-		mgr := &storage.StandaloneStorageManager{}
-		_ = mgr.Init()
-		//go mgr.ListenForMessages()
-		storage.Manager = mgr
-
-	default:
-		log.Logger().Fatal("Unsupported storage manager")
 	}
 }
-
-func (h *Hub) initializePubSubManager(pubSubManagerDriver string) {
-	switch pubSubManagerDriver {
-	case "redis":
-		rPSM := &pubsub.RedisPubSubManager{Client: clients.RedisClientInstance.GetClient()}
-		rPSM.SetKeyPrefix(env.GetString("REDIS_PREFIX", "pusher"))
-		pubsub.PubSubManager = rPSM
-	case "local":
-		saPSM := &pubsub.StandAlonePubSubManager{}
-		_ = saPSM.Init()
-		pubsub.PubSubManager = saPSM
-	default:
-		log.Logger().Fatal("Unsupported pubsub manager")
-	}
-}
-
-//func (h *Hub) initializeDispatcher(dispatcherDriver string, redisClient redis.UniversalClient) {
-//	switch dispatcherDriver {
-//	//case "redis":
-//	//	rDispatcher := &dispatcher.RedisDispatcher{Client: redisClient}
-//	//	pubsub.Dispatcher = rDispatcher
-//	case "local":
-//		saDispatcher := &dispatcher.SyncDispatcher{}
-//		saDispatcher.Init()
-//		dispatcher.Dispatcher = saDispatcher
-//	default:
-//		log.Logger().Fatal("Unsupported dispatcher manager")
-//	}
-//}
 
 // startCleaner runs the background process to periodically clean up the globalChannels, presenceChannels, and localChannels maps from stale nodes
 func (h *Hub) startCleaner() {
-	interval := env.GetSeconds("CLEANER_INTERVAL", 60)
+	interval := h.config.HubCleanerInterval
 	gracefulExit := false
 
 	log.Logger().Infof("Starting the cleaner - running every %d seconds", int64(interval.Seconds()))
@@ -207,7 +134,7 @@ func (h *Hub) startCleaner() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	pErr := pubsub.PubSubManager.Publish(ctx, constants.SoketRushInternalChannel, pubsub.ServerMessage{
+	pErr := h.config.PubSubManager.Publish(ctx, constants.SocketRushInternalChannel, pubsub.ServerMessage{
 		NodeID:  GlobalHub.nodeID,
 		Event:   constants.SocketRushEventCleanerPromote,
 		Payload: []byte{},
@@ -233,54 +160,10 @@ func (h *Hub) startCleaner() {
 				return
 			}
 		case <-ticker.C:
-			storage.Manager.Cleanup()
-		case <-h.stopChan:
+			h.config.StorageManager.Cleanup()
+		case <-h.ctx.Done():
 			log.Logger().Infoln("... Stopping the cleaner due to shutdown signal")
 			gracefulExit = true
-			return
-		}
-	}
-}
-
-// Run starts the hub. This is the core function for managing all websocket connections
-func (h *Hub) Run() {
-	log.Logger().Infoln("Starting the hub")
-
-	// Subscribe to the pubsub channel for server-to-server messages
-	go pubsub.PubSubManager.Subscribe(constants.SoketRushInternalChannel, h.server2server) // route incoming messages from pubsub to the server2server channel
-
-	// Start the storage manager
-	go storage.Manager.Start()
-
-	// Start the background cleaner process
-	time.Sleep(2 * time.Second) // wait for the storage manager to start
-
-	// Start the heartbeat broadcast - this sends out its own heartbeat and checks for other nodes
-	go h.broadcastHeartbeat()
-	go h.monitorHeartbeat()
-
-	// Star the cleaner process for removing stale nodes
-	go h.startCleaner()
-
-	// start listening for hub activity
-	for {
-		select {
-		case msg := <-h.server2server:
-			h.handleServerToServerIncoming(msg)
-		case session := <-h.register:
-			log.Logger().Tracef("[%s]  Hub: Registering new socket id: %s\n", session.socketID, session.socketID)
-			h.mutex.Lock()
-			h.sessions[session.socketID] = session
-			h.mutex.Unlock()
-			log.Logger().Tracef("[%s]  Hub: Registered new socket id: %s\n", session.socketID, session.socketID)
-		case session := <-h.unregister:
-			h.mutex.Lock()
-			delete(h.sessions, session.socketID)
-			h.mutex.Unlock()
-			// TODO: replace with cleanSession() logic
-		case <-h.stopChan:
-			log.Logger().Infoln("... Stopping the hub due to shutdown signal")
-			time.Sleep(1 * time.Second)
 			return
 		}
 	}
@@ -310,14 +193,14 @@ func (h *Hub) broadcastHeartbeat() {
 						log.Logger().Errorf("Recovered from panic in broadcastHeartbeat: %v", r)
 					}
 				}()
-				t := storage.Manager.SendNodeHeartbeat(h.nodeID)
+				t := h.config.StorageManager.SendNodeHeartbeat(h.nodeID)
 				if t == nil {
 					log.Logger().Errorf("Failed to send heartbeat to storage manager")
 					return
 				}
 				LastHeartbeat.Store(*t)
 			}()
-		case <-h.stopChan:
+		case <-h.ctx.Done():
 			log.Logger().Infoln("... Stopping heartbeat broadcast due to shutdown signal")
 			gracefulExit = true
 			return
@@ -338,7 +221,7 @@ func (h *Hub) monitorHeartbeat() {
 				log.Logger().Warn("Heartbeat appears to have stalled")
 				// You could restart the heartbeat goroutine here if needed
 			}
-		case <-h.stopChan:
+		case <-h.ctx.Done():
 			log.Logger().Info("... Stopping heartbeat monitor due to shutdown signal")
 			return
 		}
@@ -349,7 +232,7 @@ func (h *Hub) monitorHeartbeat() {
 func (h *Hub) sendToOtherServers(msg pubsub.ServerMessage) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	err := pubsub.PubSubManager.Publish(ctx, constants.SoketRushInternalChannel, msg)
+	err := h.config.PubSubManager.Publish(ctx, constants.SocketRushInternalChannel, msg)
 	if err != nil {
 		log.Logger().Errorf("Failed to publish message to other servers: %v", err)
 	}
@@ -387,7 +270,7 @@ func (h *Hub) addPresenceUser(socketID constants.SocketID, channel *Channel, mem
 	}
 
 	// add the user to the pubsub connection
-	err := storage.Manager.AddUserToPresence(h.nodeID, channel.Name, socketID, memberData)
+	err := h.config.StorageManager.AddUserToPresence(h.nodeID, channel.Name, socketID, memberData)
 	if err != nil {
 		log.Logger().Errorf("Error adding user to presence: %s", err)
 		return
@@ -398,9 +281,10 @@ func (h *Hub) addPresenceUser(socketID constants.SocketID, channel *Channel, mem
 		UserID:  memberData.UserID,
 	}
 	bounceString := fmt.Sprintf("channel:%s:%s", channel.Name, memberData.UserID)
-	dispatcher.DispatchBuffer.HandleEvent(bounceString, dispatcher.Connect, evt)
 
-	userSocketIds := storage.GetPresenceSocketsForUserID(channel.Name, memberData.UserID)
+	h.config.DispatchManager.DispatchFlap(bounceString, dispatcher.Connect, evt)
+
+	userSocketIds := storage.GetPresenceSocketsForUserID(h.config.StorageManager, channel.Name, memberData.UserID)
 	skipBroadcast := false
 	if len(userSocketIds) > 1 {
 		// if there are other sockets for this user, don't broadcast the message
@@ -441,16 +325,19 @@ func (h *Hub) getOrCreateLocalChannel(channel *Channel) *Channel {
 // also need to add the session to the pubsub channel count
 func (h *Hub) addSessionToChannel(session *Session, channel *Channel) {
 	h.getOrCreateLocalChannel(channel).addSocketID(session.socketID)
-	err := storage.Manager.AddChannel(channel.Name)
+	err := h.config.StorageManager.AddChannel(channel.Name)
 	if err != nil {
 		log.Logger().Errorf("Error adding channel to storage manager: %s", err)
 	}
 
 	if channel.Type != constants.ChannelTypePresence {
-		countErr := storage.Manager.AdjustChannelCount(h.nodeID, channel.Name, 1)
+		newCount, countErr := h.config.StorageManager.AdjustChannelCount(h.nodeID, channel.Name, 1)
 		if countErr != nil {
 			log.Logger().Errorf("Error adjusting channel count: %s", countErr)
 		}
+
+		// dispatch event
+		h.config.DispatchManager.SendChannelCountChanges(channel.Name, newCount, 1)
 	}
 }
 
@@ -466,11 +353,7 @@ func (h *Hub) removeSessionFromChannels(session *Session, channels ...constants.
 	if len(channels) > 0 {
 		channelsToRemove = channels
 	} else {
-		// remove from all channels
-		//channelsToRemove = make([]constants.ChannelName, len(session.subscriptions))
-
 		for channel := range session.subscriptions {
-			//log.Logger().Tracef("gracefully removing session from channel: %s", channel)
 			session.Tracef("gracefully removing session from channel: %s", channel)
 			channelsToRemove = append(channelsToRemove, channel)
 		}
@@ -484,19 +367,19 @@ func (h *Hub) removeSessionFromChannels(session *Session, channels ...constants.
 		channelObj := h.localChannels[channel]
 
 		if channelObj.Type == constants.ChannelTypePresence {
-			presenceData, gErr := storage.Manager.GetPresenceDataForSocket(h.nodeID, channel, session.socketID)
+			presenceData, gErr := h.config.StorageManager.GetPresenceDataForSocket(h.nodeID, channel, session.socketID)
 			if gErr != nil {
 				log.Logger().Errorf("Error getting presence data for socket: %v", gErr)
 				continue
 			}
-			userSocketIds := storage.GetPresenceSocketsForUserID(channel, presenceData.UserID)
+			userSocketIds := storage.GetPresenceSocketsForUserID(h.config.StorageManager, channel, presenceData.UserID)
 			skipBroadcast := false
 			if len(userSocketIds) > 1 {
 				// if there are other sockets for this user, don't broadcast the message
 				skipBroadcast = true
 			}
 
-			rErr := storage.Manager.RemoveUserFromPresence(h.nodeID, channel, session.socketID)
+			rErr := h.config.StorageManager.RemoveUserFromPresence(h.nodeID, channel, session.socketID)
 			if rErr != nil {
 				log.Logger().Errorf("Error removing user from presence: %s", rErr)
 				continue
@@ -508,7 +391,7 @@ func (h *Hub) removeSessionFromChannels(session *Session, channels ...constants.
 				UserID:  presenceData.UserID,
 			}
 			bounceString := fmt.Sprintf("channel:%s:%s", channel, presenceData.UserID)
-			dispatcher.DispatchBuffer.HandleEvent(bounceString, dispatcher.Disconnect, evt)
+			h.config.DispatchManager.DispatchFlap(bounceString, dispatcher.Connect, evt)
 
 			// announce that the user has left the channel
 			mrd := &MemberRemovedData{UserID: presenceData.UserID}
@@ -518,20 +401,24 @@ func (h *Hub) removeSessionFromChannels(session *Session, channels ...constants.
 				Data:    mrd.ToString(),
 			}
 			GlobalHub.sendToOtherServers(pubsub.ServerMessage{
-				NodeID: GlobalHub.nodeID,
-				Event:  constants.SocketRushEventChannelEvent,
-				//Event:    constants.SocketRushEventPresenceMemberRemoved,
+				NodeID:        GlobalHub.nodeID,
+				Event:         constants.SocketRushEventChannelEvent,
 				Payload:       _msg.ToJSON(),
 				SocketID:      session.socketID,
 				SocketIDs:     userSocketIds,
 				SkipBroadcast: skipBroadcast,
 			})
 		} else {
-			_ = storage.Manager.AdjustChannelCount(h.nodeID, channel, -1)
+			newCount, err := h.config.StorageManager.AdjustChannelCount(h.nodeID, channel, -1)
+			if err != nil {
+				log.Logger().Errorf("Error adjusting channel count: %s", err)
+				continue
+			}
+			h.config.DispatchManager.SendChannelCountChanges(channel, newCount, -1)
 		}
 
-		//channelCount := storage.Manager.GetChannelCount(channel)
-		//if channelCount == 0 {
+		// channelCount := storage.Manager.GetChannelCount(channel)
+		// if channelCount == 0 {
 		//	// TODO: send webhook for channel vacated
 		//	log.Logger().Traceln("Channel is empty; sending webhook")
 		//	_ = storage.Manager.RemoveChannel(channel)
@@ -541,7 +428,7 @@ func (h *Hub) removeSessionFromChannels(session *Session, channels ...constants.
 		//	}
 		//	dispatcher.Dispatcher.Dispatch(event)
 		//	dispatcher.DispatchBuffer.HandleEvent("channel:"+string(channel), dispatcher.Disconnect, event)
-		//}
+		// }
 
 		// check if channel is empty, delete from list
 		if len(h.localChannels[channel].Connections) == 0 {
@@ -583,7 +470,7 @@ func (h *Hub) publishChannelEventLocally(event ChannelEvent, socketIDsToExclude 
 			if err != nil {
 				log.Logger().Errorf("Error marshalling cache event to JSON: %v", err)
 			}
-			cache.ChannelCache.SetEx(string(event.Channel), string(eventPayload), 30*time.Minute)
+			h.config.ChannelCacheManager.SetEx(string(event.Channel), string(eventPayload), 30*time.Minute)
 		}
 	}
 
@@ -598,7 +485,7 @@ func (h *Hub) publishChannelEventLocally(event ChannelEvent, socketIDsToExclude 
 	for socketID := range h.localChannels[event.Channel].Connections {
 		if session, ok := h.sessions[socketID]; ok {
 			// check if the socketID is in the socketIDsToExclude list
-			if ok := util.ListContains(socketIDsToExclude, socketID); ok {
+			if ok = util.ListContains(socketIDsToExclude, socketID); ok {
 				continue
 			}
 
@@ -621,6 +508,28 @@ func (h *Hub) PublishChannelEventGlobally(event ChannelEvent) error {
 	return nil
 }
 
+// ValidatePresenceChannelRequirements - Checks if the presence channel requirements are met for a given request
+func (h *Hub) ValidatePresenceChannelRequirements(channel constants.ChannelName, userData string) (presenceMemberData pusherClient.MemberData, err *util.Error) {
+	if int64(len(storage.PresenceChannelUserIDs(h.config.StorageManager, channel))) >= h.config.MaxPresenceUsers {
+		err = util.NewError(util.ErrCodeMaxPresenceSubscribers)
+	}
+
+	if len(userData) > h.config.MaxPresenceUserDataBytes {
+		err = util.NewError(util.ErrCodePresenceUserDataTooMuch)
+	}
+
+	uErr := json.Unmarshal([]byte(userData), &presenceMemberData)
+	if uErr != nil {
+		log.Logger().Errorf("Error unmarshalling presence channel data: %s", uErr)
+		err = util.NewError(util.ErrCodeInvalidPayload)
+	}
+	if len(presenceMemberData.UserID) > constants.MaxPresenceUserIDLength {
+		err = util.NewError(util.ErrCodePresenceUserIDTooLong)
+	}
+
+	return
+}
+
 func (h *Hub) IsAcceptingConnections() bool {
 	return h.acceptingNewConnections
 }
@@ -629,14 +538,6 @@ func (h *Hub) HandleClosure() {
 	log.Logger().Info("Hub is closing, cleaning up all sessions")
 	h.acceptingNewConnections = false
 
-	var wg sync.WaitGroup
-	wg.Add(len(h.sessions))
-	for _, session := range h.sessions {
-		go func() {
-			session.CloseSession()
-			wg.Done()
-		}()
-	}
-	wg.Wait()
-	close(h.stopChan)
+	// Cancel the hub's context. This will signal all session goroutines to stop
+	h.cancel()
 }

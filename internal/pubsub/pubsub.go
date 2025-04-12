@@ -3,14 +3,16 @@ package pubsub
 import (
 	"context"
 	"fmt"
+
 	"pusher/internal/constants"
 )
 
-var PubSubManager PubSubManagerContract
-
 type PubSubManagerContract interface {
-	Subscribe(channelName string, receiveChannel chan<- ServerMessage)
+	Init() error
+	Subscribe(ctx context.Context, channelName string, receiveChannel chan<- ServerMessage)
 	Publish(ctx context.Context, channelName string, message ServerMessage) error
+	getKeyName(key string) string
+	SubscribeWithNotify(ctx context.Context, channelName string, receiveChannel chan<- ServerMessage, ready chan<- struct{})
 }
 
 type ServerEventName string
