@@ -2,17 +2,14 @@ package storage
 
 import (
 	"encoding/json"
+	"time"
+
 	pusherClient "github.com/pusher/pusher-http-go/v5"
 	"github.com/thoas/go-funk"
 	"pusher/internal/constants"
-	"pusher/internal/dispatcher"
 	"pusher/internal/payloads"
 	"pusher/internal/pubsub"
-	"pusher/log"
-	"time"
 )
-
-var Manager Contract
 
 const (
 	NodePingInterval                                = time.Duration(10) * time.Second
@@ -21,7 +18,8 @@ const (
 	ServerHeartbeat          pubsub.ServerEventName = "heartbeat"
 )
 
-type Contract interface {
+type StorageContract interface {
+	Init() error
 	Start()
 
 	// AddNewNode adds a node to the storage list of nodes
@@ -30,7 +28,7 @@ type Contract interface {
 	// RemoveNode removes a node from the storage list of nodes
 	RemoveNode(nodeID constants.NodeID) error
 
-	//PurgeNodeData purges all data related to a node, after it has stopped sending heartbeats
+	// PurgeNodeData purges all data related to a node, after it has stopped sending heartbeats
 	PurgeNodeData(nodeID constants.NodeID) error
 
 	// GetAllNodes returns a list of all nodes
@@ -49,13 +47,15 @@ type Contract interface {
 	Channels() []constants.ChannelName
 
 	// AdjustChannelCount is used to adjust the count of subscribers for a channel
-	AdjustChannelCount(nodeID constants.NodeID, channelName constants.ChannelName, countToAdd int64) error
+	AdjustChannelCount(nodeID constants.NodeID, channelName constants.ChannelName, countToAdd int64) (newCount int64, err error)
 
 	// GetChannelCount returns the count of subscribers for a channel
 	GetChannelCount(channelName constants.ChannelName) int64
 
 	AddUserToPresence(nodeID constants.NodeID, channelName constants.ChannelName, socketID constants.SocketID, memberData pusherClient.MemberData) error
 	RemoveUserFromPresence(nodeID constants.NodeID, channelName constants.ChannelName, socketID constants.SocketID) error
+
+	// GetPresenceData returns the presence data for a given channel and socketIDs for the current user (list of users and their data).
 	GetPresenceData(channelName constants.ChannelName, currentUser pusherClient.MemberData) (presenceDataBytes []byte, usersSocketIDs []constants.SocketID, pErr error)
 	GetPresenceDataForSocket(nodeID constants.NodeID, channelName constants.ChannelName, socketID constants.SocketID) (*pusherClient.MemberData, error)
 
@@ -63,6 +63,9 @@ type Contract interface {
 
 	// Cleanup is called by the hub periodically to clean up any stale data from dead nodes
 	Cleanup()
+
+	// GetPresenceSocketsForUserID(channelName constants.ChannelName, userID string) []constants.SocketID
+	// handleChannelCountChanges(channelName constants.ChannelName, newCount int64, modifiedCount int64)
 }
 
 // Global Storage Functions:
@@ -77,8 +80,8 @@ func UnmarshalPresenceData(presenceData []byte) (payloads.PresenceData, error) {
 	return data["presence"], nil
 }
 
-func PresenceChannelUserIDs(channel constants.ChannelName) []string {
-	subs, _, err := Manager.GetPresenceData(channel, pusherClient.MemberData{})
+func PresenceChannelUserIDs(storageManager StorageContract, channel constants.ChannelName) []string {
+	subs, _, err := storageManager.GetPresenceData(channel, pusherClient.MemberData{})
 	if err != nil {
 		return nil
 	}
@@ -95,38 +98,8 @@ func PresenceChannelUserIDs(channel constants.ChannelName) []string {
 	return userIDs
 }
 
-func GetPresenceSocketsForUserID(channelName constants.ChannelName, userID string) []constants.SocketID {
-	_, userSockets, _ := Manager.GetPresenceData(channelName, pusherClient.MemberData{UserID: userID})
+func GetPresenceSocketsForUserID(storageManager StorageContract, channelName constants.ChannelName, userID string) []constants.SocketID {
+	_, userSockets, _ := storageManager.GetPresenceData(channelName, pusherClient.MemberData{UserID: userID})
 
 	return userSockets
-}
-
-func handleChannelCountChanges(channelName constants.ChannelName, newCount int64, modifiedCount int64) {
-	log.Logger().Tracef("Channel %s count changed to %d (modified by %d)", channelName, newCount, modifiedCount)
-	if newCount == 0 {
-		// publish a vacated channel event
-		log.Logger().Debugf("Channel %s is now vacated", channelName)
-		event := pusherClient.WebhookEvent{
-			Name:    string(constants.WebHookChannelVacated),
-			Channel: string(channelName),
-		}
-		dispatcher.DispatchBuffer.HandleEvent("channel:"+string(channelName), dispatcher.Disconnect, event)
-	} else if newCount == modifiedCount {
-		// if the count is equal to the amount we added, publish a channel occupied event
-		log.Logger().Debugf("Channel %s is now occupied", channelName)
-		event := pusherClient.WebhookEvent{
-			Name:    string(constants.WebHookChannelOccupied),
-			Channel: string(channelName),
-		}
-		dispatcher.DispatchBuffer.HandleEvent("channel:"+string(channelName), dispatcher.Connect, event)
-	}
-
-	// in addition to the above, we will also send a 'subscription_count' webhook
-	// TODO: Cannot implement until WebhookEvent is updated to include SubscriptionCount
-	//event := pusherClient.WebhookEvent{
-	//	Name:    string(constants.WebHookSubscriptionCount),
-	//	Channel: string(channelName),
-	//	SubscriptionCount:
-	//}
-	//dispatcher.DispatchBuffer.HandleEvent("channel:"+string(channelName), dispatcher.Connect, event)
 }

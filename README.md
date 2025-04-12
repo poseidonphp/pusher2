@@ -20,6 +20,7 @@ Still in the development phase, though some basic functionality is there.
 - [x] Cache Channels
 - [x] Graceful shutdown on SIGTERM
 - [x] Webhooks support
+- [x] Batch triggers
 
 
 ## TODO
@@ -28,7 +29,6 @@ Still in the development phase, though some basic functionality is there.
 - [ ] Watchlist events?
 - [ ] Implement context watchers/timeouts for more actions either within storageLocal or the hub
 - [ ] Implement socket-id exclusion to match official spec https://pusher.com/docs/channels/server_api/excluding-event-recipients/
-- [ ] Batch triggers?
 - [ ] Batch webhooks
 - [ ] Local storage for multi-node (high availability; not scalability)
 - [ ] Tests - so far I have 0 tests
@@ -62,31 +62,49 @@ This is broken up to be as flexible as possible. The following components are bu
 ## Deployment
 You will need to set some environment variables to use this.
 
+### Required Env Vars
 | Variable         | Description                                                                                                                                                                                                                                                                      |
 |------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | APP_ID           | *REQUIRED* **Numeric** The app id to use. This is used to identify the app in the storage and pubsub.                                                                                                                                                                            |
 | APP_SECRET       | *REQUIRED* The app secret to use. This is used for authenticating server to server and webhook requests                                                                                                                                                                          |
 | APP_KEY          | *REQUIRED*  The app key to use. This is used to identify the app in the storage and pubsub.                                                                                                                                                                                      |
+
+
+### Redis Env Vars (only required if using redis)
+| Variable         | Description                                                                                                                                                                                                                                                                      |
+|------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| REDIS_URL     | The redis URL to use if using redis. Must include the port number (redis://localhost:6379)      |
+| REDIS_USE_TLS | *Default: false* Whether or not the redis connection should use TLS                             |
+| REDIS_PREFIX  | *Default: pusher* The prefix to use for the redis keys. This is used to prevent key collisions. |
+| REDIS_CLUSTER | *Default: false* Whether or not to initialize redis as a cluster.                               |
+
+### Driver Env Vars
+These variables determine which drivers/implementations to use for various backend services
+
+| Variable         | Description                                                                                                                            |
+|------------------|----------------------------------------------------------------------------------------------------------------------------------------|
+| PUBSUB_MANAGER   | *Default: local* [ redis \| local ]                                                                                                    |
+| STORAGE_MANAGER  | *Default: redis* [ redis \| local ]                                                                                                    |
+|WEBHOOK_MANAGER| *Default: http* The webhook manager to use. [ http \| sns ]                                                                            |
+|WEBHOOK_URL| *required if webhooks are enabled* The URL to send the webhooks to. This is used if using the http webhook manager.                    |
+|DISPATCHER_MANAGER| *Default: local* The dispatcher manager to use for queueing webhooks to be sent. [ local \| redis ]                                    |
+|SNS_TOPIC_ARN| *required if using sns* The SNS topic ARN to use if using the sns webhook manager. This is used to send the webhooks to the SNS topic. |
+|SNS_REGION| *required if using sns* The AWS region to use if using the sns webhook manager. This is used to send the webhooks to the SNS topic.    |
+|CHANNEL_CACHE_MANAGER| *Default: local* The channel cache manager to use. [ local \| redis ]                                                                  |
+
+
+### Other Optional Env Vars
+| Variable         | Description                                                                                                                                                                                                                                                                      |
+|------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 |APP_ENV| *Default: production* The environment to use. This is used to determine the level of output by the web server. [ production \| development ]                                                                                                                                     |
-| PUBSUB_MANAGER   | *Default: local* [ redis \| local ]                                                                                                                                                                                                                                              |
-| STORAGE_MANAGER  | *Default: redis* [ redis \| local ]                                                                                                                                                                                                                                              |
-| REDIS_URL        | The redis URL to use if using redis. Must include the port number (redis://localhost:6379)                                                                                                                                                                                       |
-| USE_TLS          | *Default: false* Whether or not the redis connection should use TLS                                                                                                                                                                                                              |
-| REDIS_PREFIX    | *Default: pusher* The prefix to use for the redis keys. This is used to prevent key collisions.                                                                                                                                                                                  |
 | LOG_LEVEL        | *Default: info* The log level to use. [error \| warn \| info \| debug \| trace ]                                                                                                                                                                                                 |
 | ACTIVITY_TIMEOUT | *Default: 60* How often should clients ping the server, in seconds                                                                                                                                                                                                               |
 |MAX_PRESENCE_USERS | *Default: 100* The maximum number of users in a presence channel. This is used to limit the number of users in a presence channel. If this is reached, the oldest user will be removed from the channel. This is used to prevent memory leaks and to keep the server responsive. |
 |MAX_PRESENCE_USER_DATA_KB| *Default: 10* The maximum size of the user data in a presence channel. This is used to limit the size of the user data in a presence channel. This is used to keep the server responsive.                                                                                        |
 |BIND_PORT | *Default: 6001* The port to bind the server to. This is used to connect to the server.                                                                                                                                                                                           |
 |WEBHOOK_ENABLED| *Default: false* Whether or not to enable webhooks.                                                                                                                                                                                                                              |
-|WEBHOOK_MANAGER| *Default: http* The webhook manager to use. [ http \| sns ]                                                                                                                                                                                                                      |
-|WEBHOOK_URL| The URL to send the webhooks to. This is used if using the http webhook manager.                                                                                                                                                                                                 |
-|DISPATCHER_MANAGER| *Default: local* The dispatcher manager to use for queueing webhooks to be sent. [ local \| redis ]                                                                                                                                                                              |
-|SNS_TOPIC_ARN| *required if using sns* The SNS topic ARN to use if using the sns webhook manager. This is used to send the webhooks to the SNS topic.                                                                                                                                           |
-|SNS_REGION| *required if using sns* The AWS region to use if using the sns webhook manager. This is used to send the webhooks to the SNS topic.                                                                                                                                              |
-|CHANNEL_CACHE_MANAGER| *Default: local* The channel cache manager to use. [ local \| redis ]                                                                                                                                                                                                            |
 
-More variables will be added as the SNS support is added.
+
 
 ## Components
 #### PubSub Manager

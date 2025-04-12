@@ -24,7 +24,7 @@ const (
 	PRODUCTION = "production"
 
 	MaxPresenceUserIDLength       = 128
-	SoketRushInternalChannel      = "socket_rush_internal"
+	SocketRushInternalChannel     = "socket_rush_internal"
 	SocketRushEventChannelEvent   = "channel-event"
 	SocketRushEventCleanerPromote = "cleaner-promote"
 
@@ -55,7 +55,3 @@ const (
 )
 
 var SupportedProtocolVersions = [...]int{7}
-
-func MaxEventSizeBytes() int {
-	return MaxEventSizeKb * 1024
-}

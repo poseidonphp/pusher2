@@ -2,8 +2,6 @@ package util
 
 import (
 	"errors"
-	"fmt"
-	"pusher/internal/config"
 )
 
 type ErrorCode int
@@ -65,8 +63,8 @@ var (
 		ErrCodeInvalidPayload:          "Invalid payload",
 		ErrCodeInvalidChannel:          "Invalid channel",
 		ErrCodeAlreadySubscribed:       "Already subscribed",
-		ErrCodeMaxPresenceSubscribers:  fmt.Sprintf("presence channel limit to %d members maximum", config.MaxPresenceUsers),
-		ErrCodePresenceUserDataTooMuch: "presence channel limit to 1KB user object",
+		ErrCodeMaxPresenceSubscribers:  "presence channel user limit reached",
+		ErrCodePresenceUserDataTooMuch: "presence channel user data exceeds limit (MAX_PRESENCE_USER_DATA_KB)",
 		ErrCodePresenceUserIDTooLong:   "presence channel limit to 128 characters user id",
 		ErrCodeNotSubscribed:           "Not subscribed",
 

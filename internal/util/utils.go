@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
-	"pusher/env"
-	"pusher/internal/constants"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"pusher/env"
+	"pusher/internal/constants"
 )
 
 var (

@@ -2,10 +2,7 @@ package internal
 
 import (
 	"encoding/json"
-	pusherClient "github.com/pusher/pusher-http-go/v5"
-	"pusher/internal/config"
 	"pusher/internal/constants"
-	"pusher/internal/storage"
 	"pusher/internal/util"
 	"pusher/log"
 	"strings"
@@ -98,28 +95,6 @@ func (mrd *MemberRemovedData) ToString() string {
 		log.Logger().Errorf("Error marshalling MemberRemovedData: %s", err)
 	}
 	return string(b)
-}
-
-// ValidatePresenceChannelRequirements - Checks if the presence channel requirements are met for a given request
-func ValidatePresenceChannelRequirements(channel constants.ChannelName, userData string) (presenceMemberData pusherClient.MemberData, err *util.Error) {
-	if storage.Manager.GetChannelCount(channel) >= config.MaxPresenceUsers {
-		err = util.NewError(util.ErrCodeMaxPresenceSubscribers)
-	}
-
-	if len(userData) > config.MaxPresenceUserDataBytes {
-		err = util.NewError(util.ErrCodePresenceUserDataTooMuch)
-	}
-
-	uErr := json.Unmarshal([]byte(userData), &presenceMemberData)
-	if uErr != nil {
-		log.Logger().Errorf("Error unmarshalling presence channel data: %s", uErr)
-		err = util.NewError(util.ErrCodeInvalidPayload)
-	}
-	if len(presenceMemberData.UserID) > constants.MaxPresenceUserIDLength {
-		err = util.NewError(util.ErrCodePresenceUserIDTooLong)
-	}
-
-	return
 }
 
 func (c *Channel) addSocketID(socketID constants.SocketID) {
