@@ -149,7 +149,7 @@ func TestValidChannel(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := ValidChannel(tc.channel)
+			result := ValidChannel(tc.channel, 0)
 			assert.Equal(t, tc.expected, result)
 		})
 	}

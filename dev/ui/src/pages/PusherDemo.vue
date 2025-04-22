@@ -10,27 +10,31 @@
         <span v-else-if="connectionStatus == 'unavailable'" title="unavailable">🔴</span>
         <span v-else :title="connectionStatus">⚫️</span>
       </h1>
-      <h4>Using AppKey: <span class="dark:text-crimson-300 dark:bg-crimson-900 text-crimson-800 bg-crimson-300 px-2 py-1 rounded-lg">{{ appKey }}</span></h4>
+
+      <span class="dark:text-cyan-300 dark:bg-cyan-900 text-cyan-800 bg-cyan-300 mr-4 px-2 py-1 rounded-lg">
+        <strong>Status:</strong> {{ connectionStatus2 }}
+      </span>
+
+      <span class="dark:text-fuchsia-300 dark:bg-fuchsia-900 text-fuchsia-800 bg-fuchsia-300 mr-4 px-2 py-1 rounded-lg">
+        <strong>App Key:</strong> {{ appKey }}
+      </span>
+
+      <span class="dark:text-amber-300 dark:bg-amber-900 text-amber-800 bg-amber-300 mr-4 px-2 py-1 rounded-lg">
+        <strong>Socket:</strong> {{ pusherSocketId }}
+      </span>
+
+      <span class="dark:text-green-300 dark:bg-green-900 text-green-800 bg-green-300 px-2 py-1 rounded-lg">
+        <strong>User:</strong> {{ userId }}
+      </span>
+
     </header>
 
     <!-- 3-Column Layout -->
-    <div class="grid grid-cols-1 md:grid-cols-7 grid-flow-col gap-6">
+    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-7 grid-flow-col gap-6">
       <!-- Column 1 -->
-      <div class="p-6 rounded-lg shadow border-2 border-crimson-500 col-span-2 ">
-        <h2 class="text-xl font-semibold mb-4 text-shadow-lg ">Presence Channel Members</h2>
-        <div>
-          <ul>
-            <li v-for="user in presenceUsers" :key="user.id">
-              {{ user.name }}
-            </li>
-          </ul>
-        </div>
-      </div>
-
-      <!-- Column 2 -->
-      <div class="col-span-2 ">
+      <div class="md:col-span-2">
         <div class="grid grid-rows-7 gap-6">
-          <div class="p-6 rounded-lg shadow border-2 border-crimson-500 row-span-3 ">
+          <div class="p-6 rounded-lg shadow border-2 border-crimson-500 row-span-4 ">
             <h2 class="text-xl font-semibold mb-4 text-shadow-lg ">Join a new channel</h2>
             <form>
               <div>
@@ -60,24 +64,51 @@
             </form>
           </div>
 
-          <div class="p-6 rounded-lg shadow border-2 border-crimson-500 row-span-2 ">
+          <div class="p-6 rounded-lg shadow border-2 border-crimson-500 row-span-3 ">
             <h2 class="text-xl font-semibold">📡 Trigger Message</h2>
             <br />
 
-              <input type="text" v-model="triggerMessage" placeholder="Trigger message" class="border p-2 rounded mb-4" />
-              <br />
+            <input type="text" v-model="triggerMessage" placeholder="Trigger message" class="border p-2 rounded mb-4" />
+            <br />
             <input type="checkbox" v-model="triggerIncludeTimestamp" id="triggerIncludeTimestamp" /> Include timestamp?
 
           </div>
+        </div>
+      </div>
 
-          <div class="p-6 rounded-lg shadow border-2 border-crimson-500 row-span-2 ">
+
+      <!-- Column 2 -->
+      <div class="md:col-span-2 ">
+        <div class="grid grid-rows-7 gap-6">
+          <div class="p-6 rounded-lg shadow border-2 border-crimson-500  row-span-4">
+            <h2 class="text-xl font-semibold mb-4 text-shadow-lg ">Presence Channel Members</h2>
+            <div>
+              <ul>
+                <li v-for="user in presenceUsers" :key="user.id">
+                  {{ user.name }}
+                </li>
+              </ul>
+            </div>
+          </div>
+
+
+
+          <div class="p-6 rounded-lg shadow border-2 border-crimson-500 row-span-3 ">
             <h2 class="text-xl font-semibold">🗣️ Whisper</h2>
-            <span class="text-xs text-crimson-400 text-shadow-lg ">Whisper on {{ selectedChannel }}</span>
-            <br />
-            <form>
-              <input type="text" v-model="whisperMessage" placeholder="Whisper message" class="border p-2 rounded mb-4" />
-              <button :disabled="!selectedChannel" @click.prevent="sendWhisper" class="button">Send</button>
-            </form>
+
+            <div v-show="allowWhisper">
+              <span class="text-xs text-crimson-400 text-shadow-lg ">Whisper on {{ selectedChannel }}</span>
+              <br />
+              <form>
+                <input type="text" v-model="whisperMessage" placeholder="Whisper message" class="border p-2 rounded mb-4" />
+                <button :disabled="!selectedChannel" @click.prevent="sendWhisper" class="button">Send</button>
+              </form>
+            </div>
+            <div v-show="!allowWhisper">
+              <span class="text-sm text-crimson-300">Select a non-public channel to send a whisper</span>
+
+            </div>
+
           </div>
 
         </div>
@@ -85,29 +116,33 @@
 
 
       <!-- Column 3 -->
-      <div class="p-6 rounded-lg shadow border-2 border-crimson-500 col-span-3">
-        <h2 class="text-xl font-semibold mb-4 text-shadow-lg ">Joined Channels</h2>
-        <div v-for="channel in joinedChannels" :key="channel.name" class="p-3 border border-gray-300 rounded-lg mb-4">
-          <h3 class="text-lg font-semibold text-left">
-            <label>
-              <input type="radio" name="selectedChannel" :value="channel.name" v-model="selectedChannel" />
-              {{ channel.name }}
-              <button @click="triggerEvent(channel.name)" class="px-3 border border-crimson-500 rounded dark:bg-gray-900 text-xl"
-              title="Trigger event on this channel"
-              >📡</button>
-              &nbsp;
-              &nbsp;
-              <button title="Close Connection" @click="disconnect(channel.name)" class="px-3 border border-crimson-500 rounded dark:bg-gray-900 text-xl">❌</button>
-            </label>
+      <div class="md:col-span-3 ">
+        <div class="grid grid-rows-7 gap-6">
+          <div class="p-6 rounded-lg shadow border-2 border-crimson-500 ">
+            <h2 class="text-xl font-semibold mb-4 text-shadow-lg ">Joined Channels</h2>
+            <div v-for="channel in joinedChannels" :key="channel.name" class="p-3 border border-gray-300 rounded-lg mb-4">
+              <h3 class="text-lg font-semibold text-left">
+                <label>
+                  <input type="radio" name="selectedChannel" :value="channel.name" v-model="selectedChannel" />
+                  {{ channel.name }}
+                  <button @click="triggerEvent(channel.name)" class="px-3 border border-crimson-500 rounded dark:bg-gray-900 text-xl"
+                  title="Trigger event on this channel"
+                  >📡</button>
+                  &nbsp;
+                  &nbsp;
+                  <button title="Close Connection" @click="disconnect(channel.name)" class="px-3 border border-crimson-500 rounded dark:bg-gray-900 text-xl">❌</button>
+                </label>
 
-          </h3>
-          <ul class="pl-4 text-left">
-            <li v-for="(message, id) in channel.messages" :key="id">
-              <span v-html="message"></span>
-            </li>
-          </ul>
+              </h3>
+              <ul class="pl-4 text-left">
+                <li v-for="(message, id) in channel.messages" :key="id">
+                  <span v-html="message"></span>
+                </li>
+              </ul>
+            </div>
+          </div>
+          </div>
         </div>
-      </div>
     </div>
 
     <!-- Optional Footer -->
@@ -141,11 +176,13 @@ const whisperMessage = ref("")
 const userId = ref("")
 
 const connectionStatus = ref("disconnected")
+const connectionStatus2 = ref("")
 
 const triggerMessage = ref("Test from app trigger")
 
 const channelTypeCache = ref(false)
 const triggerIncludeTimestamp = ref(true)
+const pusherSocketId = ref("")
 
 // const connectionStatus = computed(() => {
 //   if (store.echo) {
@@ -167,10 +204,15 @@ const computedChannelToJoin = computed(() => {
   }
 })
 
+const allowWhisper = computed(() => {
+  return selectedChannel.value && joinedChannels.value.find(c => c.name === selectedChannel.value)?.isPublic === false
+})
+
+
 const sendWhisper = () => {
   if (store.echo && selectedChannel.value) {
     const channel = joinedChannels.value.find(c => c.name === selectedChannel.value)
-    if (channel && channel.obj) {
+    if (channel && channel.obj && !channel.isPublic) {
         channel.obj.whisper("testEvent", whisperMessage.value)
     }
   }
@@ -306,6 +348,7 @@ const checkConnectionStatus = () => {
 }
 
 
+
 onMounted(async () => {
   // get query parameter for "host" and "port"
   const urlParams = new URLSearchParams(window.location.search);
@@ -313,16 +356,35 @@ onMounted(async () => {
   const host = urlParams.get("host") || "localhost"
   const port = urlParams.get("port") || "6001"
   let uid = urlParams.get("user_id") || ""
+  let loadChannels = urlParams.get("load_channels") || "false"
   let connectUserChannels = true
-  if (uid == "") {
+  if (uid == "" && loadChannels == "false") {
     connectUserChannels = false
     uid = Math.floor(Math.random() * 1000).toString()
+  } else if(uid == "") {
+    uid = Math.floor(Math.random() * 1000).toString()
   }
+
+
+
   userId.value = uid
   setInterval(checkConnectionStatus, 500)
 
+  const pusherHost = import.meta.env.VITE_APP_HOST
+
+
   // Connect to Pusher
-  await store.loadPusher(host, parseInt(port), uid)
+  await store.loadPusher(pusherHost == "pusher" ? undefined : host, parseInt(port), uid)
+  store.echo?.connector.pusher.connection.bind("state_change", (state: {current: string, previous: string }) => {
+    console.log("State changed to: ", state)
+    connectionStatus2.value = state.current
+  })
+  console.log("loaded pusher")
+  setTimeout(async () => {
+    console.log(store.echo?.connector.pusher.connection.socket_id)
+    pusherSocketId.value = store.echo?.connector.pusher.connection.socket_id ?? "unknown"
+  }, 500)
+
   joinPresenceChannel()
 
   if(connectUserChannels) {
@@ -330,13 +392,21 @@ onMounted(async () => {
     channelToJoinType.value = "private"
     joinNewChannel(channelToJoin.value)
     joinNewChannel("all-logged-in-users")
+    joinNewChannel("cache-test")
     channelToJoinType.value = "encrypted"
-    joinNewChannel("user-" + uid)
+    joinNewChannel("test")
     channelToJoinType.value = "public"
     joinNewChannel("all-public-users")
     channelToJoin.value = ""
   }
 
+  store.echo?.connector.pusher.user.bind("myTestEvent", (data: any) => {
+    console.log("My test event received", data)
+    addMessageToChannel("private-user-" + uid, "myTestEvent", data)
+  })
+
 })
+
+
 
 </script>

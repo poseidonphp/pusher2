@@ -1,6 +1,11 @@
 package cache
 
-import "time"
+import (
+	"fmt"
+	"time"
+
+	"pusher/internal/constants"
+)
 
 type CacheContract interface {
 	Init() error
@@ -11,4 +16,8 @@ type CacheContract interface {
 	Remember(key string, ttl int, callback func() (string, error)) (string, error)
 	Has(key string) bool
 	Update(key string, value string) // Update the value only if it exists
+}
+
+func GetChannelCacheKey(appID constants.AppID, channelName string) string {
+	return fmt.Sprintf("app#%s#channel#%s", appID, channelName)
 }

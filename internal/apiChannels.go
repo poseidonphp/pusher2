@@ -1,21 +1,29 @@
 package internal
 
 import (
+	"net/http"
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	pusherClient "github.com/pusher/pusher-http-go/v5"
 	"github.com/thoas/go-funk"
-	"net/http"
-	"pusher/internal/config"
+	"pusher/internal/cache"
+
 	"pusher/internal/constants"
-	"pusher/internal/storage"
+
 	"pusher/internal/util"
 	"pusher/log"
-	"strings"
 )
 
-func ChannelIndex(c *gin.Context, serverConfig *config.ServerConfig) {
+func ChannelIndex(c *gin.Context, server *Server) {
 	filterByPrefix := c.Query("filter_by_prefix")
 	info := c.Query("info")
+	app, exists := getAppFromContext(c)
+	if !exists {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "App not found in context"})
+		c.Abort()
+		return
+	}
 
 	log.Logger().Tracef("filter_by_prefix: %s", filterByPrefix)
 	log.Logger().Tracef("info: %s", info)
@@ -33,38 +41,46 @@ func ChannelIndex(c *gin.Context, serverConfig *config.ServerConfig) {
 		return
 	}
 
+	var channels map[constants.ChannelName]int64
 	// channels := storage.Manager.Channels()
-	channels := serverConfig.StorageManager.Channels()
+	// channels := server.Adapter.GetChannelsWithSocketsCount(app.ID, false)
+	if filterByPrefix == "presence-" && getUserCount {
+		channels = server.Adapter.GetPresenceChannelsWithUsersCount(app.ID, false)
+	} else {
+		channels = server.Adapter.GetChannelsWithSocketsCount(app.ID, false)
+	}
+
 	log.Logger().Tracef("Getting channels list: %v", channels)
 
 	data := pusherClient.ChannelsList{
-		Channels: make(map[string]pusherClient.ChannelListItem, len(channels)),
+		Channels: make(map[string]pusherClient.ChannelListItem),
 	}
 
-	for _, channel := range channels {
-		if filterByPrefix != "" && !strings.HasPrefix(string(channel), filterByPrefix) {
-			log.Logger().Tracef("Skipping channel: %s", channel)
+	for channelName, channelCount := range channels {
+		if filterByPrefix != "" && !strings.HasPrefix(channelName, filterByPrefix) {
+			log.Logger().Tracef("Skipping Channel: %s", channelName)
 			continue
 		}
-		var count int
-		if util.IsPresenceChannel(channel) {
-			count = len(storage.PresenceChannelUserIDs(serverConfig.StorageManager, channel))
-		} else {
-			count = int(serverConfig.StorageManager.GetChannelCount(channel))
+
+		item := &pusherClient.ChannelListItem{}
+		if getUserCount {
+			item.UserCount = int(channelCount)
 		}
-		if count > 0 {
-			item := &pusherClient.ChannelListItem{}
-			if getUserCount {
-				item.UserCount = count
-			}
-			data.Channels[string(channel)] = *item
-		}
+		data.Channels[channelName] = *item
+
 	}
 
 	c.JSON(http.StatusOK, data)
 }
 
-func ChannelShow(c *gin.Context, serverConfig *config.ServerConfig) {
+func ChannelShow(c *gin.Context, server *Server) {
+	app, exists := getAppFromContext(c)
+	if !exists {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "App not found in context"})
+		c.Abort()
+		return
+	}
+
 	channel := constants.ChannelName(c.Param("channel_name"))
 	info := c.Query("info")
 
@@ -80,20 +96,20 @@ func ChannelShow(c *gin.Context, serverConfig *config.ServerConfig) {
 
 	data.Name = string(channel)
 
-	subscriptionsCount := serverConfig.StorageManager.GetChannelCount(channel)
-	data.Occupied = subscriptionsCount > 0
-
 	if funk.Contains(infoFields, "user_count") && util.IsPresenceChannel(channel) {
-		data.UserCount = len(storage.PresenceChannelUserIDs(serverConfig.StorageManager, channel))
+		data.UserCount = server.Adapter.GetChannelMembersCount(app.ID, channel, false)
+		data.Occupied = data.UserCount > 0
 	}
 
 	if funk.Contains(infoFields, "subscription_count") {
-		data.SubscriptionCount = int(subscriptionsCount)
+		data.SubscriptionCount = int(server.Adapter.GetChannelSocketsCount(app.ID, channel, false))
+		data.Occupied = data.SubscriptionCount > 0
 	}
 
 	if funk.Contains(infoFields, "cache") && util.IsCacheChannel(channel) {
-		cachedData, exists := serverConfig.ChannelCacheManager.Get(string(channel))
-		if exists {
+		cacheKey := cache.GetChannelCacheKey(app.ID, channel)
+		cachedData, cacheExists := server.CacheManager.Get(cacheKey)
+		if cacheExists {
 			data.Cache = cachedData
 		}
 	}
@@ -101,26 +117,52 @@ func ChannelShow(c *gin.Context, serverConfig *config.ServerConfig) {
 	c.JSON(http.StatusOK, data)
 }
 
-func ChannelUsers(c *gin.Context, serverConfig *config.ServerConfig) {
-	if c.Param("channel_name") == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "channel name required"})
+func ChannelUsers(c *gin.Context, server *Server) {
+	app, exists := getAppFromContext(c)
+	if !exists {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "App not found in context"})
+		c.Abort()
 		return
 	}
 
-	channel := constants.ChannelName(c.Param("channel_name"))
+	if c.Param("channel_name") == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Channel name required"})
+		return
+	}
+
+	channel := c.Param("channel_name")
 
 	if !util.IsPresenceChannel(channel) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "presence only"})
 		return
 	}
 
-	_userIds := storage.PresenceChannelUserIDs(serverConfig.StorageManager, channel)
+	// _userIds := storage.PresenceChannelUserIDs(serverConfig.StorageManager, channel)
+	members := server.Adapter.GetChannelMembers(app.ID, channel, false)
 
 	data := pusherClient.Users{List: make([]pusherClient.User, 0)}
 
-	for _, id := range _userIds {
+	for id, _ := range members {
 		data.List = append(data.List, pusherClient.User{ID: id})
 	}
 
 	c.JSON(http.StatusOK, data)
+}
+
+func TerminateUserConnections(c *gin.Context, server *Server) {
+	app, exists := getAppFromContext(c)
+	if !exists {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "App not found in context"})
+		c.Abort()
+		return
+	}
+
+	userID := c.Param("user_id")
+	if userID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Channel name required"})
+		return
+	}
+	server.Adapter.TerminateUserConnections(app.ID, userID)
+	c.JSON(http.StatusOK, gin.H{})
+
 }

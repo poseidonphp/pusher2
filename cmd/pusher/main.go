@@ -38,36 +38,42 @@ func main() {
 
 	logger.Logger().Infoln("Booting pusher server")
 
-	err = serverConfig.InitializeBackendServices()
+	server, err := internal.NewServer(ctx, serverConfig)
 	if err != nil {
-		logger.Logger().Fatal("Failed to initialize backend services: " + err.Error())
+		logger.Logger().Fatal("Failed to create server: " + err.Error())
 	}
 
+	// err = serverConfig.InitializeBackendServices()
+	// if err != nil {
+	// 	logger.Logger().Fatal("Failed to initialize backend services: " + err.Error())
+	// }
+
 	// Create a new hub to manage client connections
-	hub := internal.NewHub(ctx, serverConfig)
-	defer handlePanic(hub)
+	// TODO DECOM THE HUB
+	// hub := internal.NewHub(ctx, serverConfig)
+	// defer handlePanic(hub)
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		hub.Run()
-	}()
+	// wg.Add(1)
+	// go func() {
+	// 	defer wg.Done()
+	// 	hub.Run()
+	// }()
 
-	server := internal.LoadWebServer(serverConfig, hub)
+	webServer := internal.LoadWebServer(server)
 
 	// Run the web server in a goroutine
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if webErr := server.ListenAndServe(); webErr != nil && !errors.Is(webErr, http.ErrServerClosed) {
+		if webErr := webServer.ListenAndServe(); webErr != nil && !errors.Is(webErr, http.ErrServerClosed) {
 			logger.Logger().Fatalf("Failed to start web server: %s", webErr)
 		}
 	}()
 
-	handleInterrupt(hub, &wg, server, cancel)
+	handleInterrupt(server, &wg, webServer, cancel)
 }
 
-func handlePanic(_ *internal.Hub) {
+func handlePanic(_ *internal.Server) {
 	if r := recover(); r != nil {
 		logger.Logger().Error("Recovered from panic", r)
 		// hub.HandleClosure()
@@ -75,7 +81,7 @@ func handlePanic(_ *internal.Hub) {
 	}
 }
 
-func handleInterrupt(hub *internal.Hub, wg *sync.WaitGroup, server *http.Server, cancel context.CancelFunc) {
+func handleInterrupt(server *internal.Server, wg *sync.WaitGroup, webServer *http.Server, cancel context.CancelFunc) {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	<-c
@@ -86,14 +92,16 @@ func handleInterrupt(hub *internal.Hub, wg *sync.WaitGroup, server *http.Server,
 	cancel()
 
 	// Close the hub (which closes the stopChan)
-	hub.HandleClosure()
+	// hub.HandleClosure()
+	server.Closing = true
+	server.CloseAllLocalSockets()
 
 	// Shutdown the HTTP server
 	ctx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 
 	logger.Logger().Info("... Shutting down HTTP server")
-	if err := server.Shutdown(ctx); err != nil {
+	if err := webServer.Shutdown(ctx); err != nil {
 		logger.Logger().Errorf("HTTP server shutdown error: %v", err)
 	}
 

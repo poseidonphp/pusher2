@@ -12,6 +12,7 @@ type Error struct {
 }
 
 const (
+	// error codes 4000-4099 = Close connection; reconnecting using same params will fail
 	ErrCodeSSLRequired                ErrorCode = 4000
 	ErrCodeAppNotExist                ErrorCode = 4001
 	ErrCodeAppDisabled                ErrorCode = 4003
@@ -21,30 +22,32 @@ const (
 	ErrCodeUnsupportedProtocolVersion ErrorCode = 4007
 	ErrCodeNoProtocolVersion          ErrorCode = 4008
 	ErrCodeUnauthorizedConnection     ErrorCode = 4009
+	ErroCodeInternalServerError       ErrorCode = 4050
 
-	ErrCodeInvalidPayload                    ErrorCode = 4010
-	ErrCodeInvalidChannel                    ErrorCode = 4011
-	ErrCodeAlreadySubscribed                 ErrorCode = 4012
-	ErrCodeMaxPresenceSubscribers            ErrorCode = 4013
-	ErrCodePresenceUserDataTooMuch           ErrorCode = 4014
-	ErrCodePresenceUserIDTooLong             ErrorCode = 4015
-	ErrCodeNotSubscribed                     ErrorCode = 4016
-	ErrCodeClientOnlySupportsPrivatePresence ErrorCode = 4017
+	// Error codes 4100-4199 = Try again after 1s
+	ErrCodeOverCapacity       ErrorCode = 4100
+	ErrCodeServerShuttingDown ErrorCode = 4105
 
-	ErrCodeOverCapacity          ErrorCode = 4100
-	ErrCodeServerShuttingDown    ErrorCode = 4105
+	// Error codes 4200-4299 = Closed by backend; Generic reconnect immediately
 	ErrCodeGenericReconnect      ErrorCode = 4200
 	ErrCodePongNotReceived       ErrorCode = 4201
 	ErrCodeClosedAfterInactivity ErrorCode = 4202
 	ErrCodeCloseExpected         ErrorCode = 4203
 
-	ErrCodeClientEventRejected      ErrorCode = 4301
+	// Error codes 4300-4399 = Client event rejected; generic error
+	ErrCodeClientEventRejected               ErrorCode = 4301
+	ErrCodeInvalidPayload                    ErrorCode = 4310
+	ErrCodeInvalidChannel                    ErrorCode = 4311
+	ErrCodeAlreadySubscribed                 ErrorCode = 4312
+	ErrCodeMaxPresenceSubscribers            ErrorCode = 4313
+	ErrCodePresenceUserDataTooMuch           ErrorCode = 4314
+	ErrCodePresenceUserIDTooLong             ErrorCode = 4315
+	ErrCodeNotSubscribed                     ErrorCode = 4316
+	ErrCodeClientOnlySupportsPrivatePresence ErrorCode = 4317
+	ErrCodeSubscriptionAccessDenied          ErrorCode = 4318
+
 	ErrCodeWebsocketAbnormalClosure ErrorCode = 4400
 	ErrCodeGoRoutineExited          ErrorCode = 4401
-
-	// error codes 4000-4099 = Close connection; reconnecting using same params will fail
-	// Error codes 4100-4199 = Try again after 1s
-	// Error codes 4200-4299 = Generic reconnect immediately
 )
 
 // @doc https://pusher.com/docs/channels/library_auth_reference/pusher-websockets-protocol#error-codes
@@ -68,7 +71,10 @@ var (
 		ErrCodePresenceUserIDTooLong:   "presence channel limit to 128 characters user id",
 		ErrCodeNotSubscribed:           "Not subscribed",
 
+		ErroCodeInternalServerError: "Internal server error",
+
 		ErrCodeClientOnlySupportsPrivatePresence: "Client only supports private and presence channels",
+		ErrCodeSubscriptionAccessDenied:          "Subscription access denied",
 
 		ErrCodeServerShuttingDown: "Server shutting down",
 

@@ -8,56 +8,50 @@ Still in the development phase, though some basic functionality is there.
 - [x] Basic channel support (subscribe/unsubscribe)
 - [x] Encrypted channel support
 - [x] Private/presence/encrypted channel authentication
-- [x] Client side events
-- [x] Channel APIs/routes
-- [x] Redis pubsub support
-- [x] Redis storage support (including cleaning up stale records from crashed nodes)
+- [x] Client side events 
+- [x] Channel APIs/routes *(except for terminate user connections)*
+- [x] Redis pubsub/adapter support
 - [x] Multi-node support (via redis)
 - [x] Demo UI for use in development of this server
 - [x] Auth server emulator for use in development of this server
-- [x] Support for local storage (in-memory) for single node
-- [x] Support for local pubsub (in-memory) for single node
 - [x] Cache Channels
 - [x] Graceful shutdown on SIGTERM
 - [x] Webhooks support
+- [x] Support for webhook config such as channel and event filters
 - [x] Batch triggers
+- [x] Structure supports multiple apps (though only one app is supported right now)
 
 
 ## TODO
-- [ ] Support for webhook config such as channel and event filters
 - [ ] Support for terminating user connections
 - [ ] Watchlist events?
 - [ ] Implement context watchers/timeouts for more actions either within storageLocal or the hub
 - [ ] Implement socket-id exclusion to match official spec https://pusher.com/docs/channels/server_api/excluding-event-recipients/
 - [ ] Batch webhooks
-- [ ] Local storage for multi-node (high availability; not scalability)
 - [ ] Tests - so far I have 0 tests
-- [ ] ~~NATS support~~
+- [ ] NATS support
 - [ ] Metrics support (prometheus)
 - [ ] Documentation
 - [ ] Examples
-- [ ] App Manager (support multiple apps)
+- [ ] App Manager: Dynamo
+- [ ] App Manager: Mysql/Postgres
 - [x] SNS support (not yet tested)
 - [ ] Benchmarking
 - [ ] issue with sending webhooks for private-encrypted channels; fails to decrypt?
 - [ ] TLS support?
+- [ ] CORS
 - [ ] More stuff i'm sure, will update as i think of it
 
-## Things i'm not happy with...
-- Needing the redis cleanup job to run in case a node crashes and leaves stale records in there
+## Known Issues
+- [ ] "User Authentication" not fully working.
 
+## Things i'm not happy with...
 
 This is broken up to be as flexible as possible. The following components are built to an interface (along with supported drivers thus far):
-- Storage - this is the main storage interface. This is where all the "shared" data is stored (presence channel members, channel counts)
-  - Redis
-  - Local (in-memory) (single node only)
-  - Local-synced (in-memory) (multi-node) not yet implemented
-- PubSub - this is the pubsub interface. This is where all the "shared" data is sent to other nodes (presence channel members, channel counts)
-  - Redis
-  - Local (single node only)
-- App Manager - Store/load list of apps - not yet implemented, so far only one app supported via env vars
-- Dispatcher - used for dispatching webhook events. Not yet implemented. Will support local, SQS, Redis Queues
-- Webhook - how to send events (not yet implemented); will support http, sns
+- Adapter - used for inter-node communication (local, redis)
+- App Manager - Store/load list of apps (so far only one app supported via env vars)
+- Queue - used for dispatching webhook events  (local, SQS, Redis)
+- Webhook - how to send events (http, sns)
 
 ## Deployment
 You will need to set some environment variables to use this.
@@ -107,17 +101,14 @@ These variables determine which drivers/implementations to use for various backe
 
 
 ## Components
-#### PubSub Manager
+#### Adapter Manager
 This is the backend communication channel, used to support multi-node deployments. You can use any option in a single-node setup, but if you are using multiple nodes, you will need to use redis.
 
-#### Storage Manager
-This is used to store the presence channel members and channel counts. This is used to support multi-node deployments. You can use any option in a single-node setup, but if you are using multiple nodes, you will need to use one of the other options.
-
 Currently supported drivers are:
-* local - everything is kept in-memory on the node
-* redis - data is kept in redis. A background 'cleaner' job will run every 20 seconds to look for any stale nodes and remove them from the redis store, which can happen if a node crashes.
+* local 
+* redis 
 
-#### Dispatcher
+#### Queue
 This is used for preparing the webhook events to be sent. It is a means for queueing the delivery of the events. The default option is 'local'.
 
 Currently supported drivers are:

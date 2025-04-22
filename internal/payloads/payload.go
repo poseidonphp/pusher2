@@ -2,14 +2,16 @@ package payloads
 
 import (
 	"encoding/json"
-	"pusher/env"
+
 	"pusher/internal/constants"
 	"pusher/internal/util"
+	"pusher/log"
 )
 
 // RequestEvent ...
 type RequestEvent struct {
 	Event string `json:"event"`
+	Data  any    `json:"data"`
 }
 
 // Payload ...
@@ -37,9 +39,9 @@ type EstablishData struct {
 }
 
 // EstablishPack Channels -> Client
-func EstablishPack(socketID constants.SocketID) []byte {
-	data := EstablishData{SocketID: socketID, ActivityTimeout: env.GetInt("ACTIVITY_TIMEOUT", 10)}
-	//data := EstablishData{SocketID: socketID, ActivityTimeout: 20}
+func EstablishPack(socketID constants.SocketID, timeout int) []byte {
+	data := EstablishData{SocketID: socketID, ActivityTimeout: timeout}
+	// data := EstablishData{SocketID: socketID, ActivityTimeout: 20}
 	b, err := json.Marshal(data)
 	if err != nil {
 		panic(err)
@@ -53,17 +55,6 @@ func EstablishPack(socketID constants.SocketID) []byte {
 type ErrData struct {
 	Message string         `json:"message"`
 	Code    util.ErrorCode `json:"code,omitempty"` // optional
-}
-
-// ErrPack Channels -> Client
-func ErrPack(code util.ErrorCode) []byte {
-	data := ErrData{Message: util.ErrCodes[code], Code: code}
-
-	b, err := json.Marshal(data)
-	if err != nil {
-		panic(err)
-	}
-	return PayloadPack(constants.PusherError, string(b))
 }
 
 // **** PONG ****
@@ -84,13 +75,13 @@ func PongPack() []byte {
 
 // **** SUBSCRIBE ****
 
-// Subscribe ...
+// SubscribePayload ...
 type SubscribePayload struct {
 	Event string               `json:"event"`
 	Data  SubscribeChannelData `json:"data"`
 }
 
-// SubscribeData ...
+// SubscribeChannelData ...
 type SubscribeChannelData struct {
 	Channel     constants.ChannelName `json:"channel"`
 	Auth        string                `json:"auth,omitempty"`         // optional
@@ -127,12 +118,30 @@ func SubscriptionSucceededPack(channel constants.ChannelName, data string) []byt
 	return b
 }
 
+type ErrorData struct {
+	Type   string `json:"type"`
+	Error  string `json:"error"`
+	Status int    `json:"status"`
+}
+
+// SubscriptionErrPack ...
+func SubscriptionErrPack(channelName constants.ChannelName, errType string, message string, code int) []byte {
+	d := ErrorData{Type: errType, Error: message, Status: code}
+	_d, _ := json.Marshal(d)
+	data := &SubscriptionSucceeded{
+		Event:   constants.PusherSubscriptionError,
+		Channel: channelName,
+		Data:    string(_d),
+	}
+	b, _ := json.Marshal(data)
+	return b
+}
+
 // PresenceData ...
 type PresenceData struct {
-	IDs  []string                     `json:"ids"`
-	Hash map[string]map[string]string `json:"hash"`
-	//Hash  map[string]map[string]string `json:"hash"`
-	Count int `json:"count"`
+	IDs   []string                     `json:"ids"`
+	Hash  map[string]map[string]string `json:"hash"`
+	Count int                          `json:"count"`
 }
 
 type MemberAddedPack struct {
@@ -148,6 +157,80 @@ type ClientChannelEvent struct {
 	Channel constants.ChannelName `json:"channel"`
 }
 
-// ChannelCacheMiss
+// ChannelCacheMiss ...
 type ChannelCacheMiss struct {
+}
+
+type ChannelEvent struct {
+	Event    string                `json:"event"`
+	Data     any                   `json:"data,omitempty"`
+	Channel  constants.ChannelName `json:"channel,omitempty"`
+	UserID   string                `json:"user_id,omitempty"`   // optional, present only if this is a `client event` on a `presence channel`
+	SocketID constants.SocketID    `json:"socket_id,omitempty"` // optional, skips the event from being sent to this socket
+}
+
+func (ce *ChannelEvent) ToJson(marshalDataProperty bool) []byte {
+	if marshalDataProperty {
+		data, err := json.Marshal(ce.Data)
+		if err != nil {
+			log.Logger().Errorf("Error marshalling ChannelEvent data: %s", err)
+			return ErrorPack(util.ErrCodeInvalidPayload, "Error serializing event data", ce.Channel)
+		}
+		ce.Data = string(data)
+	}
+	payload, err := json.Marshal(ce)
+	if err != nil {
+		log.Logger().Errorf("Error marshalling ChannelEvent: %s", err)
+		return ErrorPack(util.ErrCodeInvalidPayload, "Error serializing event data", ce.Channel)
+	}
+	return payload
+}
+
+type ChannelErrorData struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+// ErrorPack creates a JSON payload for an error event ready to be sent to the client.
+// It includes the error code and message, and optionally the channel name.
+// If it fails to marshal the data, it returns a predefined error message that is client-ready.
+func ErrorPack(code util.ErrorCode, message string, channel ...constants.ChannelName) []byte {
+	_data := ChannelErrorData{Code: int(code), Message: message}
+	// data, err := json.Marshal(_data)
+	// if err != nil {
+	// 	log.Logger().Errorf("Error marshalling ChannelEvent data: %s", err)
+	// 	return []byte(`{"event":"pusher:error","data":"{\"code\":4310,\"message\":\"Error serializing error data\"}"}`)
+	// }
+
+	ch := ""
+	if len(channel) > 0 {
+		ch = string(channel[0])
+	}
+
+	_evt := ChannelEvent{
+		Event:   constants.PusherError,
+		Channel: ch,
+		Data:    _data,
+		// Data:    string(data),
+	}
+
+	evt, err := json.Marshal(_evt)
+	if err != nil {
+		log.Logger().Errorf("Error marshalling ChannelEvent: %s", err)
+		// Return pre-defined error message for event serialization error
+		if len(channel) > 0 {
+			return []byte(`{"event":"pusher:error","channel":"` + string(channel[0]) + `","data":"{\"code\":4310,\"message\":\"Error serializing error data\"}"}`)
+		}
+		return []byte(`{"event":"pusher:error","data":"{\"code\":4310,\"message\":\"Error serializing error data\"}"}`)
+	}
+
+	return evt
+}
+
+type PusherApiMessage struct {
+	Name     string                  `json:"name,omitempty" form:"name" binding:"required"`
+	Data     string                  `json:"data,omitempty" form:"data" binding:"required"`
+	Channel  constants.ChannelName   `json:"channel,omitempty" form:"channel,omitempty" binding:"required_without=Channels"`
+	Channels []constants.ChannelName `json:"channels,omitempty" form:"channels,omitempty" binding:"required_without=Channel"`
+	SocketID constants.SocketID      `json:"socket_id,omitempty"`
 }

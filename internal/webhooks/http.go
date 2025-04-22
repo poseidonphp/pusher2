@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	pusherClient "github.com/pusher/pusher-http-go/v5"
 	"io"
 	"net/http"
-	"pusher/env"
+
+	pusherClient "github.com/pusher/pusher-http-go/v5"
 	"pusher/internal/util"
 	"pusher/log"
 )
@@ -16,9 +16,9 @@ type HttpWebhook struct {
 	WebhookUrl string
 }
 
-func (h *HttpWebhook) Send(webhook pusherClient.Webhook) error {
+func (h *HttpWebhook) Send(webhook pusherClient.Webhook, url string, appKey string, appSecret string) error {
 
-	if h.WebhookUrl == "" {
+	if url == "" {
 		log.Logger().Debugf("No webhook URL specified")
 		return nil
 	}
@@ -31,15 +31,15 @@ func (h *HttpWebhook) Send(webhook pusherClient.Webhook) error {
 	}
 	// create a POST request and send the data to the webhook URL
 	client := &http.Client{}
-	req, err := http.NewRequest("POST", h.WebhookUrl, bytes.NewBuffer(data))
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(data))
 	if err != nil {
 		log.Logger().Debugf("Error creating request: %s", err)
 		return err
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Pusher-Key", env.GetString("APP_KEY", ""))
-	req.Header.Set("X-Pusher-Signature", util.HmacSignature(string(data), env.GetString("APP_SECRET", "")))
+	req.Header.Set("X-Pusher-Key", appKey)
+	req.Header.Set("X-Pusher-Signature", util.HmacSignature(string(data), appSecret))
 
 	// Send the request
 	resp, err := client.Do(req)

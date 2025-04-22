@@ -98,7 +98,7 @@ func TestInitializeServerConfig(t *testing.T) {
 		assert.Equal(t, constants.PRODUCTION, config.Env)
 		assert.Equal(t, "http", config.WebhookDriver)
 		assert.Equal(t, false, config.WebhookEnabled)
-		assert.Equal(t, "local", config.DispatchDriver)
+		assert.Equal(t, "local", config.QueueDriver)
 		assert.Equal(t, "local", config.PubSubDriver)
 		assert.Equal(t, "local", config.StorageDriver)
 		assert.Equal(t, "local", config.ChannelCacheDriver)
@@ -226,7 +226,7 @@ func TestInitializeServerConfig(t *testing.T) {
 		config, err := InitializeServerConfig(&ctx, flags)
 		require.NoError(t, err)
 		assert.NotNil(t, config)
-		assert.Equal(t, "redis", config.DispatchDriver)
+		assert.Equal(t, "redis", config.QueueDriver)
 
 		assert.NotNil(t, config.RedisInstance)
 	})

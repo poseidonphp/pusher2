@@ -1,4 +1,4 @@
-package dispatcher
+package queues
 
 import (
 	"context"
@@ -29,7 +29,7 @@ func (m *MockWebhookManager) Send(webhook pusher.Webhook) error {
 }
 
 func TestSyncDispatcher_Init(t *testing.T) {
-	dispatcher := &SyncDispatcher{}
+	dispatcher := &SyncQueue{}
 
 	err := dispatcher.Init()
 	assert.NoError(t, err)
@@ -38,7 +38,7 @@ func TestSyncDispatcher_Init(t *testing.T) {
 }
 
 func TestSyncDispatcher_Dispatch(t *testing.T) {
-	dispatcher := &SyncDispatcher{}
+	dispatcher := &SyncQueue{}
 	err := dispatcher.Init()
 	assert.NoError(t, err)
 
@@ -64,7 +64,7 @@ selectLoop:
 }
 
 func TestSyncDispatcher_Dispatch_PrivateEncrypted(t *testing.T) {
-	dispatcher := &SyncDispatcher{}
+	dispatcher := &SyncQueue{}
 	err := dispatcher.Init()
 	assert.NoError(t, err)
 
@@ -95,7 +95,7 @@ func TestSyncDispatcher_ListenForEvents(t *testing.T) {
 		SentWebhooks: []pusher.Webhook{},
 	}
 
-	dispatcher := &SyncDispatcher{
+	dispatcher := &SyncQueue{
 		WebhookManager: mockWebhook,
 	}
 	err := dispatcher.Init()
@@ -158,7 +158,7 @@ func TestSyncDispatcher_ListenForEvents_WebhookError(t *testing.T) {
 		ShouldError:  true,
 	}
 
-	dispatcher := &SyncDispatcher{
+	dispatcher := &SyncQueue{
 		WebhookManager: mockWebhook,
 	}
 	err := dispatcher.Init()
@@ -193,7 +193,7 @@ func TestSyncDispatcher_ListenForEvents_WebhookError(t *testing.T) {
 }
 
 func TestSyncDispatcher_InitFlapDetection(t *testing.T) {
-	dispatcher := &SyncDispatcher{}
+	dispatcher := &SyncQueue{}
 
 	// Test with webhook enabled
 	dispatcher.InitFlapDetection(true, dispatcher, 1)
@@ -202,7 +202,7 @@ func TestSyncDispatcher_InitFlapDetection(t *testing.T) {
 	assert.Equal(t, dispatcher, dispatcher.FlapDetector.dispatcher)
 
 	// Test with webhook disabled
-	dispatcher = &SyncDispatcher{}
+	dispatcher = &SyncQueue{}
 	dispatcher.InitFlapDetection(false, dispatcher, 1)
 	assert.NotNil(t, dispatcher.FlapDetector)
 	assert.False(t, dispatcher.FlapDetector.WebhookEnabled)
@@ -211,7 +211,7 @@ func TestSyncDispatcher_InitFlapDetection(t *testing.T) {
 func TestSyncDispatcher_SendChannelCountChanges(t *testing.T) {
 	mockWebhook := &MockWebhookManager{}
 
-	dispatcher := &SyncDispatcher{
+	dispatcher := &SyncQueue{
 		WebhookManager: mockWebhook,
 	}
 

@@ -1,18 +1,77 @@
-package middlewares
+package internal
 
 import (
 	"fmt"
 	"math"
+	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
+	"pusher/internal/apps"
+	"pusher/internal/util"
 )
+
+func getAppFromContext(c *gin.Context) (*apps.App, bool) {
+	app, exists := c.Get("app")
+	if !exists {
+		return nil, false
+	}
+	appTyped, ok := app.(*apps.App)
+	return appTyped, ok
+}
+
+func AppMiddleware(server *Server) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		appID := c.Param("app_id")
+		app, err := server.AppManager.FindByID(appID)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			c.Abort()
+			return
+		}
+		c.Set("app", app)
+		c.Next()
+	}
+}
+
+// Signature middleware validates the signature on an incoming http request
+func SignatureMiddleware(_ *Server) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		app, exists := getAppFromContext(c)
+		if !exists {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "App not found in context"})
+			c.Abort()
+			return
+		}
+
+		ok, err := util.Verify(c.Request, app.ID, app.Secret)
+		if ok {
+			c.Next()
+		} else {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+			c.Abort()
+			return
+		}
+	}
+}
+
+func CorsMiddleware(_ *Server) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Next()
+	}
+}
+
+func RateLimiterMiddleware(_ *Server) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Next()
+	}
+}
 
 var timeFormat = "2006-01-02 15:04:05 -0700"
 
 // Logger is the logrus logger handler
-func Logger(logger *logrus.Logger) gin.HandlerFunc {
+func LoggerMiddleware(logger *logrus.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// other handler can change c.Path so:
 		path := c.Request.URL.Path

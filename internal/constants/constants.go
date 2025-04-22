@@ -2,11 +2,15 @@ package constants
 
 import "time"
 
-type ChannelName string
+type ChannelName = string // allow alias as string
+
+type AppID = string // allow alias as string
+
+type UserID = string // allow alias as string
 
 type NodeID string
 
-type SocketID string
+type SocketID = string
 
 type ChannelType string
 
@@ -28,6 +32,8 @@ const (
 	SocketRushEventChannelEvent   = "channel-event"
 	SocketRushEventCleanerPromote = "cleaner-promote"
 
+	SocketRushServerToUserPrefix = "#server-to-user"
+
 	PusherError                         = "pusher:error"
 	PusherCacheMiss                     = "pusher:cache_miss"
 	PusherSubscribe                     = "pusher:subscribe"
@@ -38,7 +44,9 @@ const (
 	PusherInternalSubscriptionSucceeded = "pusher_internal:subscription_succeeded"
 	PusherInternalPresenceMemberAdded   = "pusher_internal:member_added"
 	PusherInternalPresenceMemberRemoved = "pusher_internal:member_removed"
-
+	PusherSubscriptionError             = "pusher:subscription_error"
+	PusherSignin                        = "pusher:signin"
+	PusherSigninSuccess                 = "pusher:signin_success"
 	// WEBHOOKS
 
 	WebHookMemberAdded       WebHookEvent = "member_added"
