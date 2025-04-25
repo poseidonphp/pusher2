@@ -1,17 +1,17 @@
 package internal
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	pusherClient "github.com/pusher/pusher-http-go/v5"
 	"github.com/thoas/go-funk"
-	"pusher/internal/config"
 
 	"time"
 
 	"pusher/internal/constants"
-	"pusher/internal/middlewares"
 	"pusher/internal/payloads"
 	"pusher/internal/util"
 	"pusher/log"
@@ -24,37 +24,47 @@ var upgrader = websocket.Upgrader{
 	WriteBufferSize: constants.MaxMessageSize,
 }
 
-func LoadWebServer(serverConfig *config.ServerConfig, hub *Hub) *http.Server {
+func LoadWebServer(server *Server) *http.Server {
 	// Establish the Gin router for handling HTTP requests
-	if serverConfig.Env == constants.PRODUCTION {
+	if server.config.Env == constants.PRODUCTION {
 		gin.SetMode(gin.ReleaseMode)
 	} else {
 		gin.SetMode(gin.DebugMode)
 	}
 	router := gin.New()
-	router.Use(middlewares.Logger(log.Logger()))
+	router.Use(LoggerMiddleware(log.Logger()))
 	router.Use(gin.Recovery())
 
-	backendGroup := router.Group("/apps", middlewares.Signature(serverConfig))
+	backendGroup := router.Group("/apps",
+		CorsMiddleware(server),
+		AppMiddleware(server), // this should come early as it will set the app in the context
+		SignatureMiddleware(server),
+		RateLimiterMiddleware(server),
+	)
 	{
 		backendGroup.POST("/:app_id/events", func(c *gin.Context) {
-			EventTrigger(c, hub)
+			EventTrigger(c, server)
 		})
 
 		backendGroup.POST("/:app_id/batch_events", func(c *gin.Context) {
-			BatchEventTrigger(c, hub)
+			BatchEventTrigger(c, server)
 		})
 
 		backendGroup.GET("/:app_id/channels", func(c *gin.Context) {
-			ChannelIndex(c, serverConfig)
+			ChannelIndex(c, server)
 		})
 
 		backendGroup.GET("/:app_id/channels/:channel_name", func(c *gin.Context) {
-			ChannelShow(c, serverConfig)
+			ChannelShow(c, server)
 		})
 
 		backendGroup.GET("/:app_id/channels/:channel_name/users", func(c *gin.Context) {
-			ChannelUsers(c, serverConfig)
+			ChannelUsers(c, server)
+		})
+
+		//    POST /apps/[app_id]/users/[user_id]/terminate_connections
+		backendGroup.POST("/:app_id/users/:user_id/terminate_connections", func(c *gin.Context) {
+			TerminateUserConnections(c, server)
 		})
 
 	}
@@ -64,23 +74,23 @@ func LoadWebServer(serverConfig *config.ServerConfig, hub *Hub) *http.Server {
 		version := c.Query("version")
 		protocol := c.Query("protocol")
 
-		ServeWs(hub, c.Writer, c.Request, appKey, client, version, protocol)
+		ServeWs(server, c.Writer, c.Request, appKey, client, version, protocol)
 	})
 
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
-	server := &http.Server{
-		Addr:    serverConfig.BindAddress + ":" + serverConfig.Port,
+	webServer := &http.Server{
+		Addr:    server.config.BindAddress + ":" + server.config.Port,
 		Handler: router,
 	}
-	return server
+	return webServer
 }
 
 // ServeWS handles websocket requests from the peer
-func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request, appKey, client, version, protocolStr string) {
-	if !hub.IsAcceptingConnections() {
+func ServeWs(server *Server, w http.ResponseWriter, r *http.Request, appKey, client, version, protocolStr string) {
+	if server.Closing {
 		log.Logger().Error("Server is not accepting connections")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
@@ -94,42 +104,98 @@ func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request, appKey, client, v
 		return
 	}
 
-	_, appErr := hub.config.LoadAppByKey(appKey)
-	if appErr != nil {
-		log.Logger().Error("Error app key: ", appKey)
-		_ = conn.SetWriteDeadline(time.Now().Add(time.Second))
-		_ = conn.WriteMessage(websocket.TextMessage, payloads.ErrPack(util.ErrCodeAppNotExist))
-		_ = conn.Close()
-		return
-	}
-
 	if !funk.Contains(constants.SupportedProtocolVersions, protocol) {
-		log.Logger().Error("Unsupported protocol version", protocol)
-		_ = conn.SetWriteDeadline(time.Now().Add(time.Second))
-		_ = conn.WriteMessage(websocket.TextMessage, payloads.ErrPack(util.ErrCodeUnsupportedProtocolVersion))
-		_ = conn.Close()
+		log.Logger().Debug("Unsupported protocol version", protocol)
+		closeConnectionWithError(conn, util.ErrCodeUnsupportedProtocolVersion, "unsupported protocol version")
 		return
 	}
 	socketID := util.GenerateSocketID()
 	log.Logger().Tracef("New socket id: %s\n", socketID)
-	session := &Session{
-		hub:              hub,
-		conn:             conn,
-		client:           client,
-		version:          version,
-		protocol:         protocol,
-		sendChannel:      make(chan []byte, constants.MaxMessageSize),
-		subscriptions:    make(map[constants.ChannelName]bool),
-		socketID:         socketID,
-		closed:           false,
-		done:             make(chan struct{}),
-		presenceChannels: make(map[constants.ChannelName]constants.ChannelName),
+
+	// Check for valid app
+	app, err := server.AppManager.FindByKey(appKey)
+	if err != nil {
+		log.Logger().Error("app not found: ", appKey)
+		closeConnectionWithError(conn, util.ErrCodeAppNotExist, "app not found")
+		return
 	}
 
-	hub.register <- session
-	go session.senderSubProcess(hub.ctx)
-	go session.readerSubProcess()
+	if !app.Enabled {
+		log.Logger().Error("app is disabled: ", appKey)
+		closeConnectionWithError(conn, util.ErrCodeAppDisabled, "app is disabled")
+		return
+	}
 
-	// Send message to client confirming the established connection
-	session.Send(payloads.EstablishPack(socketID))
+	ws := &WebSocket{
+		ID:   socketID,
+		conn: conn,
+		// sendChannel: make(chan []byte, constants.MaxMessageSize),
+		done:               make(chan struct{}),
+		closed:             false,
+		server:             server,
+		app:                app,
+		SubscribedChannels: make(map[constants.ChannelName]*Channel),
+		PresenceData:       make(map[constants.ChannelName]*pusherClient.MemberData),
+	}
+
+	// perform app specific checks like max connections, app is enabled, etc.
+
+	socketCount := server.Adapter.GetSocketsCount(app.ID, false)
+	if err != nil {
+		msg := fmt.Sprintf("failed to get socket count: %s", err.Error())
+		log.Logger().Error(msg)
+		closeConnectionWithError(conn, util.ErrCodeOverQuota, "internal error while retrieving socket count")
+		return
+	}
+	if app.MaxConnections > 0 && socketCount+1 > app.MaxConnections {
+		log.Logger().Infof("max connections exceeded for app: %s", app.ID)
+		closeConnectionWithError(conn, util.ErrCodeOverQuota, "maximum number of connections has been reached")
+		return
+	}
+
+	err = server.Adapter.AddSocket(app.ID, ws)
+	if err != nil {
+		log.Logger().Errorf("failed to add socket: %s, %s ", ws.ID, err.Error())
+		closeConnectionWithError(conn, util.ErrCodeOverQuota, "internal error while adding socket")
+		return
+	}
+
+	// broadcast the pusher:connection_established
+	go ws.Listen()
+	ws.Send(payloads.EstablishPack(socketID, app.ActivityTimeout))
+
+	if app.EnableUserAuthentication {
+		// if user authentication is set to true for the app, set a timeout for the authentication to happen (idk - see soketi ws-handler:147)
+		// TODO user sign in/signin authentication
+		ws.RequireUserAuth()
+	}
+	// TODO metrics: markNewConnection(ws)
+
+	// session := &Session{
+	// 	hub:              hub,
+	// 	conn:             conn,
+	// 	client:           client,
+	// 	version:          version,
+	// 	protocol:         protocol,
+	// 	sendChannel:      make(chan []byte, constants.MaxMessageSize),
+	// 	subscriptions:    make(map[constants.ChannelName]bool),
+	// 	socketID:         socketID,
+	// 	closed:           false,
+	// 	done:             make(chan struct{}),
+	// 	presenceChannels: make(map[constants.ChannelName]constants.ChannelName),
+	// }
+	//
+	// hub.register <- session
+	// go session.senderSubProcess(hub.ctx)
+	// go session.readerSubProcess()
+	//
+	// // Send message to client confirming the established connection
+	// session.Send(payloads.EstablishPack(socketID))
+}
+
+// closeConnectionWithError closes the connection with an error message
+func closeConnectionWithError(conn *websocket.Conn, errorCode util.ErrorCode, message string) {
+	_ = conn.SetWriteDeadline(time.Now().Add(time.Second))
+	_ = conn.WriteMessage(websocket.TextMessage, payloads.ErrorPack(errorCode, message))
+	_ = conn.Close()
 }

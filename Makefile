@@ -9,17 +9,21 @@ redis-down:
 
 .PHONY ui:
 ui:
-	@if [ ! -f ./dev/ui/.env ]; then \
-		echo "Creating .env from env.example"; \
-		cp ./dev/ui/env.example ./dev/ui/.env; \
-	else \
-		echo ".env already exists"; \
-	fi
 	cd dev/ui && yarn && yarn dev
 
 .PHONY run:
 run:
 	go run cmd/pusher/main.go
+
+.PHONY run-alt:
+run-alt:
+	go run cmd/pusher/main.go --port=6002
+
+.PHONY run-alt2:
+run-alt2:
+	go run cmd/pusher/main.go --port=6003
+
+
 
 .PHONY auth:
 auth:
