@@ -1,7 +1,6 @@
 package internal
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -126,11 +125,17 @@ func ServeWs(server *Server, w http.ResponseWriter, r *http.Request, appKey, cli
 		return
 	}
 
+	// ws := server.websocketPool.Get().(*WebSocket)
+	// ws.ID = socketID
+	// ws.conn = conn
+	// ws.closed = false
+	// ws.server = server
+	// ws.app = app
+
 	ws := &WebSocket{
 		ID:   socketID,
 		conn: conn,
-		// sendChannel: make(chan []byte, constants.MaxMessageSize),
-		done:               make(chan struct{}),
+		// done:               make(chan struct{}),
 		closed:             false,
 		server:             server,
 		app:                app,
@@ -141,12 +146,7 @@ func ServeWs(server *Server, w http.ResponseWriter, r *http.Request, appKey, cli
 	// perform app specific checks like max connections, app is enabled, etc.
 
 	socketCount := server.Adapter.GetSocketsCount(app.ID, false)
-	if err != nil {
-		msg := fmt.Sprintf("failed to get socket count: %s", err.Error())
-		log.Logger().Error(msg)
-		closeConnectionWithError(conn, util.ErrCodeOverQuota, "internal error while retrieving socket count")
-		return
-	}
+
 	if app.MaxConnections > 0 && socketCount+1 > app.MaxConnections {
 		log.Logger().Infof("max connections exceeded for app: %s", app.ID)
 		closeConnectionWithError(conn, util.ErrCodeOverQuota, "maximum number of connections has been reached")
@@ -164,33 +164,13 @@ func ServeWs(server *Server, w http.ResponseWriter, r *http.Request, appKey, cli
 	go ws.Listen()
 	ws.Send(payloads.EstablishPack(socketID, app.ActivityTimeout))
 
-	if app.EnableUserAuthentication {
-		// if user authentication is set to true for the app, set a timeout for the authentication to happen (idk - see soketi ws-handler:147)
-		// TODO user sign in/signin authentication
-		ws.RequireUserAuth()
+	if app.RequireChannelAuthorization {
+		// if require_channel_authorization is set to true for the app, set a timeout for the authorization to happen
+		// This closes any conns that don't subscribe to a private/presence within x seconds
+		ws.WatchForAuthentication()
 	}
-	// TODO metrics: markNewConnection(ws)
 
-	// session := &Session{
-	// 	hub:              hub,
-	// 	conn:             conn,
-	// 	client:           client,
-	// 	version:          version,
-	// 	protocol:         protocol,
-	// 	sendChannel:      make(chan []byte, constants.MaxMessageSize),
-	// 	subscriptions:    make(map[constants.ChannelName]bool),
-	// 	socketID:         socketID,
-	// 	closed:           false,
-	// 	done:             make(chan struct{}),
-	// 	presenceChannels: make(map[constants.ChannelName]constants.ChannelName),
-	// }
-	//
-	// hub.register <- session
-	// go session.senderSubProcess(hub.ctx)
-	// go session.readerSubProcess()
-	//
-	// // Send message to client confirming the established connection
-	// session.Send(payloads.EstablishPack(socketID))
+	// TODO metrics: markNewConnection(ws)
 }
 
 // closeConnectionWithError closes the connection with an error message
