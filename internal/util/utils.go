@@ -5,23 +5,28 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
 
-	"pusher/env"
 	"pusher/internal/constants"
 )
 
 var (
-	channelValidationRegex  = regexp.MustCompile("^[-a-zA-Z0-9_=@,.;]+$")
-	channelValidationRegex2 = regexp.MustCompile("^#server-to-user-[-a-zA-Z0-9_=@,.;]+$")
-	validAppIDRegex         = regexp.MustCompile(`^[0-9]+$`)
+	channelValidationRegex = regexp.MustCompile("^(#server-to-user-)?[-a-zA-Z0-9_=@,.;]+$")
+	validAppIDRegex        = regexp.MustCompile(`^[0-9]+$`)
 )
+
+// FileExists checks if a file exists at the given path and returns a boolean
+func FileExists(filename string) bool {
+	_, err := os.Stat(filename)
+	return err == nil
+}
 
 // GenerateSocketID generate a new random Hash
 func GenerateSocketID() constants.SocketID {
-	return constants.SocketID(fmt.Sprintf("%d.%d", rand.Intn(math.MaxInt32), rand.Intn(math.MaxInt32)))
+	return fmt.Sprintf("%d.%d", rand.Intn(math.MaxInt32), rand.Intn(math.MaxInt32))
 }
 
 // IsPresenceChannel determines if the channel is a presence channel by looking for specific prefixes
@@ -44,14 +49,14 @@ func IsCacheChannel(channel constants.ChannelName) bool {
 	return strings.HasPrefix(channel, "cache-") || strings.HasPrefix(channel, "presence-cache-") || strings.HasPrefix(channel, "private-cache-") || strings.HasPrefix(channel, "private-encrypted-cache-")
 }
 
-// IsClientEvent ...
+// IsClientEvent checks the event name to see if it is a client event
 func IsClientEvent(event string) bool {
 	return strings.HasPrefix(event, "client-")
 }
 
 // ValidChannel is used by http api to validate channel names
 func ValidChannel(channel constants.ChannelName, maxChannelNameLength int) bool {
-	if len(channel) > maxChannelNameLength || (!channelValidationRegex.MatchString(channel) && !channelValidationRegex2.MatchString(channel)) {
+	if len(channel) > maxChannelNameLength || !channelValidationRegex.MatchString(channel) {
 		return false
 	}
 	return true
@@ -63,14 +68,14 @@ func ValidateChannelName(channel constants.ChannelName, maxChannelNameLength int
 		return fmt.Errorf("channel name too long, max length is %d", maxChannelNameLength)
 	}
 
-	if !channelValidationRegex.MatchString(channel) && !channelValidationRegex2.MatchString(channel) {
+	if !channelValidationRegex.MatchString(channel) {
 		return fmt.Errorf("invalid characters in channel name")
 	}
 
 	return nil
 }
 
-// ValidAppID ...
+// ValidAppID matches the app id against a regex to ensure it is a valid integer
 func ValidAppID(appID string) bool {
 	return validAppIDRegex.MatchString(appID)
 }
@@ -84,7 +89,7 @@ func Str2Int64(a string) (int64, error) {
 	return b, nil
 }
 
-// Str2Int string -> int
+// Str2Int converts a string to an integer
 func Str2Int(a string) (int, error) {
 	b, err := strconv.Atoi(a)
 	if err != nil {
@@ -93,7 +98,7 @@ func Str2Int(a string) (int, error) {
 	return b, nil
 }
 
-func ValidateChannelAuth(authToken string, socketId constants.SocketID, channel constants.ChannelName, channelData string) bool {
+func ValidateChannelAuth(authToken string, appSecret string, socketId constants.SocketID, channel constants.ChannelName, channelData string) bool {
 	if authToken == "" {
 		return false
 	}
@@ -119,7 +124,7 @@ func ValidateChannelAuth(authToken string, socketId constants.SocketID, channel 
 	}
 
 	reconstructedString := strings.Join(reconstructedStringParts, ":")
-	expected := HmacSignature(reconstructedString, env.GetString("APP_SECRET", ""))
+	expected := HmacSignature(reconstructedString, appSecret)
 
 	return hmac.Equal([]byte(signature), []byte(expected))
 }

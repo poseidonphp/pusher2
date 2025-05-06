@@ -1,9 +1,9 @@
 package internal
 
-// This will replace the hub
-
 import (
 	"context"
+
+	"sync"
 
 	"pusher/internal/apps"
 	"pusher/internal/cache"
@@ -11,18 +11,20 @@ import (
 	"pusher/internal/metrics"
 	"pusher/internal/queues"
 	"pusher/internal/webhooks"
+	"pusher/log"
 )
 
 type Server struct {
 	config         *config.ServerConfig
 	ctx            context.Context
-	AppManager     apps.AppManagerContract
+	AppManager     apps.AppManagerInterface
 	Adapter        AdapterInterface
 	MetricsManager metrics.MetricsInterface
 	CacheManager   cache.CacheContract
 	QueueManager   queues.QueueInterface
 	WebhookSender  *webhooks.WebhookSender
 	Closing        bool
+	// websocketPool  sync.Pool
 }
 
 func NewServer(ctx context.Context, conf *config.ServerConfig) (*Server, error) {
@@ -32,8 +34,8 @@ func NewServer(ctx context.Context, conf *config.ServerConfig) (*Server, error) 
 		return nil, err
 	}
 
-	appManager := &apps.ArrayAppManager{}
-	if err = appManager.Init(); err != nil {
+	appManager, err := loadAppManager(ctx, conf)
+	if err != nil {
 		return nil, err
 	}
 
@@ -73,11 +75,72 @@ func NewServer(ctx context.Context, conf *config.ServerConfig) (*Server, error) 
 		CacheManager:   cacheManager,
 		QueueManager:   queueManager,
 	}
+
+	// s.websocketPool = sync.Pool{
+	// 	New: func() interface{} {
+	// 		return &WebSocket{
+	// 			SubscribedChannels: make(map[constants.ChannelName]*Channel),
+	// 			PresenceData:       make(map[constants.ChannelName]*pusherClient.MemberData),
+	// 		}
+	// 	},
+	// }
+
 	return s, nil
 }
 
 func (s *Server) CloseAllLocalSockets() {
 	// implement similar to ws-handler.ts line 231
+	log.Logger().Info("Closing all local sockets")
+	namespaces, err := s.Adapter.GetNamespaces()
+	if err != nil {
+		return
+	}
+
+	if len(namespaces) == 0 {
+		return
+	}
+	wg := &sync.WaitGroup{}
+
+	for _, ns := range namespaces {
+		sockets := ns.GetSockets()
+		if len(sockets) == 0 {
+			continue
+		}
+		for _, socket := range sockets {
+			wg.Add(1)
+			go func(socket *WebSocket) {
+				defer wg.Done()
+				socket.Close()
+			}(socket)
+		}
+	}
+	wg.Wait()
+	log.Logger().Info("All local sockets closed. Clearing namespaces")
+	s.Adapter.ClearNamespaces()
+	// runtime.GC()
+}
+
+func loadAppManager(_ context.Context, conf *config.ServerConfig) (apps.AppManagerInterface, error) {
+	var appManager apps.AppManagerInterface
+	var err error
+
+	switch conf.AppManager {
+	case "array":
+		arr := &ArrayAppManager{}
+		if err = arr.Init(conf.Applications); err != nil {
+			return nil, err
+		}
+		appManager = arr
+
+	default:
+		arr := &ArrayAppManager{}
+		if err = arr.Init(conf.Applications); err != nil {
+			return nil, err
+		}
+		appManager = arr
+	}
+
+	return appManager, nil
 }
 
 func loadAdapter(ctx context.Context, conf *config.ServerConfig) (AdapterInterface, error) {
@@ -118,7 +181,7 @@ func loadQueueManager(ctx context.Context, conf *config.ServerConfig, webhookSen
 	return queueManager, nil
 }
 
-func loadCacheManager(ctx context.Context, conf *config.ServerConfig) (cache.CacheContract, error) {
+func loadCacheManager(_ context.Context, conf *config.ServerConfig) (cache.CacheContract, error) {
 	var cacheManager cache.CacheContract
 	var err error
 

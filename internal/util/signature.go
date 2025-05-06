@@ -36,8 +36,12 @@ func Verify(r *http.Request, appID string, appSecret string) (bool, error) {
 	query.Del("auth_signature")
 	queryString := prepareQueryString(query)
 	stringToSign := strings.Join([]string{strings.ToUpper(r.Method), r.URL.Path, queryString}, "\n")
-
-	return HmacSignature(stringToSign, appSecret) == signature, nil
+	signatureIsValid := HmacSignature(stringToSign, appSecret) == signature
+	if !signatureIsValid {
+		log.Logger().Debugf("Signature mismatch: %s != %s", HmacSignature(stringToSign, appSecret), signature)
+		return false, errors.New("invalid signature")
+	}
+	return true, nil
 }
 
 func checkVersion(version string) bool {

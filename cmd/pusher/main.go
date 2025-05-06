@@ -3,17 +3,21 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log"
 
 	"net/http"
 	"os"
 	"os/signal"
 
-	"pusher/internal"
-
 	"runtime"
 	"sync"
 	"syscall"
 	"time"
+
+	"pusher/internal"
+
+	// _ "net/http/pprof"
 
 	"pusher/internal/config"
 	logger "pusher/log"
@@ -21,43 +25,42 @@ import (
 
 func init() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
+	/**** PROFILING - REMOVE BEFORE PRODUCTION ****/
+	// also imported _ "net/http/pprof"
+	// go func() {
+	// 	log.Logger().Println("Starting pprof on :6060")
+	// 	log.Logger().Println(http.ListenAndServe("localhost:6060", nil))
+	// }()
+	/**** END PROFILING ****/
 }
 
 func main() {
 	// Bootstrap the application by loading environment variables
 	ctx, cancel := context.WithCancel(context.Background())
-
-	commandLineFlags := config.ParseCommandLineFlags()
-
-	serverConfig, err := config.InitializeServerConfig(&ctx, commandLineFlags)
+	serverConfig, err := config.InitializeServerConfigNew(&ctx)
 	if err != nil {
-		logger.Logger().Fatal(err)
+		log.Fatalf("failed to load config: %v", err)
 	}
+	fmt.Printf("Loaded config: %+v\n", serverConfig)
+
+	// commandLineFlags := config.ParseCommandLineFlags()
+	//
+	// serverConfig, err := config.InitializeServerConfig(&ctx, commandLineFlags)
+	// if err != nil {
+	// 	logger.Logger().Fatal(err)
+	// }
 
 	var wg sync.WaitGroup
 
 	logger.Logger().Infoln("Booting pusher server")
 
+	// server, err := internal.NewServer(ctx, serverConfig, commandLineFlags)
 	server, err := internal.NewServer(ctx, serverConfig)
 	if err != nil {
 		logger.Logger().Fatal("Failed to create server: " + err.Error())
 	}
 
-	// err = serverConfig.InitializeBackendServices()
-	// if err != nil {
-	// 	logger.Logger().Fatal("Failed to initialize backend services: " + err.Error())
-	// }
-
-	// Create a new hub to manage client connections
-	// TODO DECOM THE HUB
-	// hub := internal.NewHub(ctx, serverConfig)
-	// defer handlePanic(hub)
-
-	// wg.Add(1)
-	// go func() {
-	// 	defer wg.Done()
-	// 	hub.Run()
-	// }()
+	defer handlePanic(server)
 
 	webServer := internal.LoadWebServer(server)
 
@@ -73,10 +76,11 @@ func main() {
 	handleInterrupt(server, &wg, webServer, cancel)
 }
 
-func handlePanic(_ *internal.Server) {
+func handlePanic(server *internal.Server) {
 	if r := recover(); r != nil {
 		logger.Logger().Error("Recovered from panic", r)
-		// hub.HandleClosure()
+		server.Closing = true
+		server.CloseAllLocalSockets()
 		os.Exit(1)
 	}
 }
@@ -91,8 +95,7 @@ func handleInterrupt(server *internal.Server, wg *sync.WaitGroup, webServer *htt
 	// Cancel the context to signal all goroutines to stop
 	cancel()
 
-	// Close the hub (which closes the stopChan)
-	// hub.HandleClosure()
+	// Close the server
 	server.Closing = true
 	server.CloseAllLocalSockets()
 

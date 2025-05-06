@@ -32,10 +32,9 @@ export const useAppStore = defineStore('app', () => {
             authEndpoint: 'http://localhost:8099/auth?user_id=' + user_id,
             authTransport: 'ajax',
         }
-
-        const pusherClient = new Pusher(import.meta.env.VITE_APP_KEY, pusherOptions)
-        if (import.meta.env.VITE_ENABLE_USER_AUTHENTICATION == "true") {
-        // if (import.meta.env.VITE_ENABLE_USER_AUTHENTICATION) {
+        const appKey = import.meta.env.VITE_OVERRIDE_APP_KEY ?? import.meta.env.VITE_APP_KEY
+        const pusherClient = new Pusher(appKey, pusherOptions)
+        if (import.meta.env.VITE_APP_ENABLE_USER_AUTHENTICATION == "true") {
             pusherClient.signin()
         }
 

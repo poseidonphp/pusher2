@@ -57,7 +57,7 @@ func checkMessageToBroadcast(c *gin.Context, app *apps.App, apiMsg *payloads.Pus
 func broadcastMessage(message *payloads.PusherApiMessage, app *apps.App, server *Server) {
 	// Publish to pubsub
 	for _, channel := range message.Channels {
-
+		log.Logger().Debugf("Broadcasting message to channel: %s", channel)
 		_channelEvent := payloads.ChannelEvent{
 			Event:    message.Name,
 			Channel:  channel,

@@ -8,8 +8,6 @@ type AppID = string // allow alias as string
 
 type UserID = string // allow alias as string
 
-type NodeID string
-
 type SocketID = string
 
 type ChannelType string
@@ -27,12 +25,7 @@ const (
 	// PRODUCTION env
 	PRODUCTION = "production"
 
-	MaxPresenceUserIDLength       = 128
-	SocketRushInternalChannel     = "socket_rush_internal"
-	SocketRushEventChannelEvent   = "channel-event"
-	SocketRushEventCleanerPromote = "cleaner-promote"
-
-	SocketRushServerToUserPrefix = "#server-to-user"
+	SocketRushServerToUserPrefix = "#server-to-user-"
 
 	PusherError                         = "pusher:error"
 	PusherCacheMiss                     = "pusher:cache_miss"

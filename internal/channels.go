@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync"
 
 	pusherClient "github.com/pusher/pusher-http-go/v5"
 	"pusher/internal/apps"
@@ -53,26 +52,26 @@ func CreateChannelFromString(app *apps.App, channelName constants.ChannelName) *
 	if util.IsPresenceChannel(channel.Name) {
 		channel.Type = constants.ChannelTypePresence
 		channel.RequiresAuth = true
-		if strings.HasPrefix(string(channel.Name), "presence-cache-") {
+		if strings.HasPrefix(channel.Name, "presence-cache-") {
 			channel.IsCache = true
 		}
 	} else if util.IsPrivateEncryptedChannel(channel.Name) {
 		channel.Type = constants.ChannelTypePrivateEncrypted
 		channel.RequiresAuth = true
 		channel.IsEncrypted = true
-		if strings.HasPrefix(string(channel.Name), "private-encrypted-cache-") {
+		if strings.HasPrefix(channel.Name, "private-encrypted-cache-") {
 			channel.IsCache = true
 		}
 	} else if util.IsPrivateChannel(channel.Name) {
 		channel.Type = constants.ChannelTypePrivate
 		channel.RequiresAuth = true
-		if strings.HasPrefix(string(channel.Name), "private-cache-") {
+		if strings.HasPrefix(channel.Name, "private-cache-") {
 			channel.IsCache = true
 		}
 	} else {
 		channel.Type = constants.ChannelTypePublic
 		channel.RequiresAuth = false
-		if strings.HasPrefix(string(channel.Name), "cache-") {
+		if strings.HasPrefix(channel.Name, "cache-") {
 			channel.IsCache = true
 		}
 	}
@@ -83,7 +82,7 @@ func CreateChannelFromString(app *apps.App, channelName constants.ChannelName) *
 
 func (c *Channel) Join(adapter AdapterInterface, ws *WebSocket, message payloads.SubscribePayload) *ChannelJoinResponse {
 	if c.RequiresAuth {
-		if !util.ValidateChannelAuth(message.Data.Auth, ws.ID, c.Name, message.Data.ChannelData) {
+		if !util.ValidateChannelAuth(message.Data.Auth, c.App.Secret, ws.ID, c.Name, message.Data.ChannelData) {
 			return &ChannelJoinResponse{
 				ErrorCode: util.ErrCodeSubscriptionAccessDenied,
 				Message:   "Invalid signature",
@@ -148,7 +147,7 @@ func (c *Channel) joinPresenceChannel(adapter AdapterInterface, ws *WebSocket, m
 	return response
 }
 
-func (c *Channel) joinNonPresenceChannel(adapter AdapterInterface, ws *WebSocket, message payloads.SubscribePayload) *ChannelJoinResponse {
+func (c *Channel) joinNonPresenceChannel(adapter AdapterInterface, ws *WebSocket, _ payloads.SubscribePayload) *ChannelJoinResponse {
 	connections, joinErr := adapter.AddToChannel(c.App.ID, c.Name, ws)
 	if joinErr != nil {
 		log.Logger().Errorf("Error joining Channel: %s", joinErr)
@@ -182,51 +181,49 @@ func (c *Channel) Leave(adapter AdapterInterface, ws *WebSocket) *ChannelLeaveRe
 	return resp
 }
 
-type ChannelEvent struct {
-	Event    string                `json:"event"`
-	Channel  constants.ChannelName `json:"Channel"`
-	Data     string                `json:"data"`
-	UserID   string                `json:"user_id,omitempty"`   // optional, present only if this is a `client event` on a `presence Channel`
-	SocketID constants.SocketID    `json:"socket_id,omitempty"` // optional, skips the event from being sent to this socket
-}
+//
+// type ChannelEvent struct {
+// 	Event    string                `json:"event"`
+// 	Channel  constants.ChannelName `json:"Channel"`
+// 	Data     string                `json:"data"`
+// 	UserID   string                `json:"user_id,omitempty"`   // optional, present only if this is a `client event` on a `presence Channel`
+// 	SocketID constants.SocketID    `json:"socket_id,omitempty"` // optional, skips the event from being sent to this socket
+// }
+//
+// func (ce *ChannelEvent) DataToJson() ([]byte, error) {
+// 	d, er := json.Marshal(ce.Data)
+// 	if er != nil {
+// 		log.Logger().Errorf("Error marshalling ChannelEvent data: %s", er)
+// 		return nil, er
+// 	}
+// 	return d, nil
+// }
+//
+// func (ce *ChannelEvent) ToJSON() []byte {
+// 	b, err := json.Marshal(ce)
+// 	if err != nil {
+// 		log.Logger().Errorf("Error marshalling ChannelEvent: %s", err)
+// 	}
+// 	return b
+// }
 
-func (ce *ChannelEvent) DataToJson() ([]byte, error) {
-	d, er := json.Marshal(ce.Data)
-	if er != nil {
-		log.Logger().Errorf("Error marshalling ChannelEvent data: %s", er)
-		return nil, er
-	}
-	return d, nil
-}
-
-func (ce *ChannelEvent) ToJSON() []byte {
-	b, err := json.Marshal(ce)
-	if err != nil {
-		log.Logger().Errorf("Error marshalling ChannelEvent: %s", err)
-	}
-	return b
-}
-
-// MemberRemovedData ...
-type MemberRemovedData struct {
-	UserID string `json:"user_id"`
-}
-
-func (mrd *MemberRemovedData) ToString() string {
-	b, err := json.Marshal(mrd)
-	if err != nil {
-		log.Logger().Errorf("Error marshalling MemberRemovedData: %s", err)
-	}
-	return string(b)
-}
-
-func (c *Channel) addSocketID(socketID constants.SocketID) {
-	mutex := sync.Mutex{}
-	mutex.Lock()
-	defer mutex.Unlock()
-	c.Connections[socketID] = true
-}
-
-func (c *Channel) getOrCreateHubChannel() {
-
-}
+// // MemberRemovedData ...
+// type MemberRemovedData struct {
+// 	UserID string `json:"user_id"`
+// }
+//
+// func (mrd *MemberRemovedData) ToString() string {
+// 	b, err := json.Marshal(mrd)
+// 	if err != nil {
+// 		log.Logger().Errorf("Error marshalling MemberRemovedData: %s", err)
+// 	}
+// 	return string(b)
+// }
+//
+// func (c *Channel) addSocketID(socketID constants.SocketID) {
+// 	mutex := sync.Mutex{}
+// 	mutex.Lock()
+// 	defer mutex.Unlock()
+// 	c.Connections[socketID] = true
+// }
+//

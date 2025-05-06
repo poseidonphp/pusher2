@@ -64,15 +64,15 @@ func (q *AbstractQueue) Send(app *apps.App, event *pusher.WebhookEvent) {
 	useFlapDetection := true
 
 	switch event.Name {
-	case string(constants.WebHookChannelOccupied):
-		eventType = Connect
-		key = fmt.Sprintf("app:%s:channel:%s", app.ID, event.Channel)
+	// case string(constants.WebHookChannelOccupied):
+	// 	eventType = Connect
+	// 	key = fmt.Sprintf("app:%s:channel:%s", app.ID, event.Channel)
 	case string(constants.WebHookChannelVacated):
 		eventType = Disconnect
 		key = fmt.Sprintf("app:%s:channel:%s", app.ID, event.Channel)
-	case string(constants.WebHookMemberAdded):
-		eventType = Connect
-		key = fmt.Sprintf("app:%s:channel:%s:member:%s", app.ID, event.Channel, event.UserID)
+	// case string(constants.WebHookMemberAdded):
+	// 	eventType = Connect
+	// 	key = fmt.Sprintf("app:%s:channel:%s:member:%s", app.ID, event.Channel, event.UserID)
 	case string(constants.WebHookMemberRemoved):
 		eventType = Disconnect
 		key = fmt.Sprintf("app:%s:channel:%s:member:%s", app.ID, event.Channel, event.UserID)
@@ -235,6 +235,6 @@ func (q *AbstractQueue) SendCacheMissed(app *apps.App, channel constants.Channel
 	q.Send(app, event)
 }
 
-func (q *AbstractQueue) sendWebhookByBatching(app *apps.App, data pusher.Webhook, queueName string) {
+func (q *AbstractQueue) sendWebhookByBatching(_ *apps.App, _ pusher.Webhook, _ string) {
 	//
 }

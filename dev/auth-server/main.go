@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -41,11 +42,34 @@ func fileExists(filename string) bool {
 var encryptionKey string
 var pusherClient *pusher.Client
 
+var appID string
+var appKey string
+var appSecret string
+var appCluster string
+
+var usePusherSaas bool
+
 func init() {
 
 }
 
+func getFlagOrEnv(flagVal *string, envVal string) string {
+	if *flagVal != "" {
+		return *flagVal
+	}
+
+	return os.Getenv(envVal)
+}
+
 func main() {
+
+	appIdFlag := flag.String("app-id", "", "Pusher app ID")
+	appKeyFlag := flag.String("app-key", "", "Pusher app key")
+	appSecretFlag := flag.String("app-secret", "", "Pusher app secret")
+	appClusterFlag := flag.String("app-cluster", "", "Pusher app cluster")
+	usePusherSaasFlag := flag.Bool("use-pusher-saas", false, "Use Pusher SaaS")
+	flag.Parse()
+
 	if fileExists("../../.env") {
 		err := godotenv.Load("../../.env")
 		if err != nil {
@@ -55,7 +79,17 @@ func main() {
 		fmt.Println("No .env file found")
 	}
 
-	if os.Getenv("APP_ID") == "" {
+	appID = getFlagOrEnv(appIdFlag, "APP_ID")
+	appKey = getFlagOrEnv(appKeyFlag, "APP_KEY")
+	appSecret = getFlagOrEnv(appSecretFlag, "APP_SECRET")
+	appCluster = getFlagOrEnv(appClusterFlag, "APP_CLUSTER")
+	if appCluster == "" {
+		appCluster = "us2"
+	}
+
+	usePusherSaas = *usePusherSaasFlag || os.Getenv("APP_HOST") == "pusher"
+
+	if appID == "" {
 		panic("APP_ID not set")
 	}
 
@@ -72,19 +106,19 @@ func main() {
 
 	pusherClient, _ = pusher.ClientFromURL(
 		fmt.Sprintf("http://%s:%s@%s/apps/%s",
-			os.Getenv("APP_KEY"),
-			os.Getenv("APP_SECRET"),
+			appKey,
+			appSecret,
 			"localhost:6001",
-			os.Getenv("APP_ID"),
+			appID,
 		),
 	)
 
-	if os.Getenv("APP_HOST") == "pusher" {
+	if usePusherSaas {
 		pusherClient = &pusher.Client{
-			AppID:   os.Getenv("APP_ID"),
-			Key:     os.Getenv("APP_KEY"),
-			Secret:  os.Getenv("APP_SECRET"),
-			Cluster: os.Getenv("APP_CLUSTER"),
+			AppID:   appID,
+			Key:     appKey,
+			Secret:  appSecret,
+			Cluster: appCluster,
 		}
 	}
 
@@ -233,7 +267,7 @@ func AuthUser(c *gin.Context) {
 	// 	Auth     string `json:"auth"`
 	// 	UserData string `json:"user_data"`
 	// }{
-	// 	Auth:     fmt.Sprintf("%s:%s", os.Getenv("APP_KEY"), res),
+	// 	Auth:     fmt.Sprintf("%s:%s", appKey, res),
 	// 	UserData: string(userObjJson),
 	// }
 	var aResp authResponse
@@ -423,12 +457,11 @@ func ReceiveWebHook(c *gin.Context) {
 }
 
 func pusherUrl() string {
-
 	return fmt.Sprintf("http://%s:%s@%s/apps/%s",
-		os.Getenv("APP_KEY"),
-		os.Getenv("APP_SECRET"),
+		appKey,
+		appSecret,
 		"localhost:6001",
-		os.Getenv("APP_ID"),
+		appID,
 	)
 }
 

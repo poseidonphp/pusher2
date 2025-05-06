@@ -1,31 +1,161 @@
-This project is no where near ready for use... Please do not use it yet. If you stumble on this and want to contribute, 
-please do! I would love to have some help on this project. Feel free to open an issue or PR - though at least in the initial stages, i may be picky on what I want to focus or the direction of the project.
+# Socket Rush - Realtime WebSocket Server
 
-Still in the development phase, though some basic functionality is there. 
+Socket Rush is a scalable, multi-node WebSocket server with support for presence channels, private channels, and encrypted channels. It's designed to be flexible and configurable through various methods.
 
-## Working (AFAIK)
-- [x] Basic presence channel support (join/leave)
-- [x] Basic channel support (subscribe/unsubscribe)
-- [x] Encrypted channel support
-- [x] Private/presence/encrypted channel authentication
-- [x] Client side events 
-- [x] Channel APIs/routes *(except for terminate user connections)*
-- [x] Redis pubsub/adapter support
-- [x] Multi-node support (via redis)
-- [x] Demo UI for use in development of this server
-- [x] Auth server emulator for use in development of this server
-- [x] Cache Channels
-- [x] Graceful shutdown on SIGTERM
-- [x] Webhooks support
-- [x] Support for webhook config such as channel and event filters
-- [x] Batch triggers
-- [x] Structure supports multiple apps (though only one app is supported right now)
+## Configuration Options
+
+Socket Rush can be configured through three methods (in order of precedence):
+
+1. **Command-line flags** (highest priority)
+2. **Environment variables**
+3. **JSON configuration file** (lowest priority by default, but can be preferred over env vars with the `--prefer-config-file` flag)
+
+## Server-Level Command-line Flags
+
+The 3 parameters that are required to run the server are `--app-id`, `--app-key`, and `--app-secret`. These can be set through command-line flags, environment variables, or in the JSON configuration file.
+
+When using a database driven app manager (not yet implemented), those 3 parameters will not be required.
+
+| Flag                                     | Environment Variable                   | Config JSON Key                                       | Config JSON Type | Description                                           | Default            |
+|------------------------------------------|----------------------------------------|-------------------------------------------------------|------------------|-------------------------------------------------------|--------------------|
+| `--port`                                 | `PORT`                                 | `port`                                                | int              | Port on which to run the server                       | `6001`             |
+| `--bind-address`                         | `BIND_ADDRESS`                         | `bind_address`                                        | string           | Address on which to bind the server                   | `"0.0.0.0"`        |
+| `--env-file`                             | n/a                                    | n/a                                                   | n/a              | Path to the .env file                                 | `"./.env"`         |
+| `--config-file`                          | n/a                                    | n/a                                                   | n/a              | Path to a config json file                            | None               |
+| `--cache-driver`                         | `CACHE_DRIVER`                         | `cache_driver`                                        | string           | Cache driver to use (`local`, `redis`)                | `"local"`          |
+| `--queue-driver`                         | `QUEUE_DRIVER`                         | `queue_driver`                                        | string           | Queue driver to use (`local`, `redis`)                | `"local"`          |
+| `--adapter-driver`                       | `ADAPTER_DRIVER`                       | `adapter_driver`                                      | string           | Adapter driver to use (`local`, `redis`)              | `"local"`          |
+| `--app-manager`                          | `APP_MANAGER`                          | `app_manager`                                         | string           | App manager to use (`array`)                          | `"array"`          |
+| `--app-env`                              | `APP_ENV`                              | `app_env`                                             | string           | Environment to run the server in                      | `"production"`     |
+| `--redis-prefix`                         | `REDIS_PREFIX`                         | `redis_prefix`                                        | string           | Prefix to use for Redis keys                          | `"pusher"`         |
+| `--redis-url`                            | `REDIS_URL`                            | `redis_url`                                           | string           | URL of the Redis server                               | `"localhost:6379"` |
+| `--redis-tls`                            | `REDIS_TLS`                            | `redis_tls`                                           | bool             | Use TLS for Redis connection                          | `false`            |
+| `--redis-cluster`                        | `REDIS_CLUSTER`                        | `redis_cluster`                                       | bool             | Use Redis cluster mode                                | `false`            |
+| `--log-level`                            | `LOG_LEVEL`                            | `log_level`                                           | string           | Log level (`trace`, `debug`, `info`, `warn`, `error`) | `"info"`           |
+| `--ignore-logger-middleware`             | `IGNORE_LOGGER_MIDDLEWARE`             | `ignore_logger_middleware`                            | bool             | Ignore logger middleware for performance              | `false`            |
+| `--app-id`                               | `APP_ID`                               | `applications[].app_id`                               | string           | App ID for the default app                            | None               |
+| `--app-key`                              | `APP_KEY`                              | `applications[].app_key`                              | string           | App key for the default app                           | None               |
+| `--app-secret`                           | `APP_SECRET`                           | `applications[].app_secret`                           | string           | App secret for the default app                        | None               |
+| `--app-activity-timeout`                 | `APP_ACTIVITY_TIMEOUT`                 | `applications[].app_activity_timeout`                 | int              | App activity timeout (seconds)                        | `60`               |
+| `--app-max-presence-users`               | `APP_MAX_PRESENCE_USERS`               | `applications[].app_max_presence_users`               | int              | App max presence users                                | `100`              |
+| `--app-require-authorization`            | `APP_REQUIRE_AUTHORIZATION`            | `applications[].app_require_channel_authorization`    | bool             | App require authorization                             | `false`            |
+| `--app-webhook-enabled`                  | `APP_WEBHOOK_ENABLED`                  | `applications[].app_webhooks_enabled`                 | bool             | App webhook enabled                                   | `false`            |
+| `--app-enable-client-messages`           | `APP_ENABLE_CLIENT_MESSAGES`           | `applications[].app_enable_client_messages`           | bool             | App enable client messages                            | `false`            |
+| `--app-authorization-timeout-seconds`    | `APP_AUTHORIZATION_TIMEOUT_SECONDS`    | `applications[].app_authorization_timeout_seconds`    | int              | App authorization timeout (seconds)                   | `5`                |
+| `--app-max-connections`                  | `APP_MAX_CONNECTIONS`                  | `applications[].app_max_connections`                  | int              | App max connections   (0 for unlimited)               | `0`                |
+| `--app-max-backend-events-per-second`    | `APP_MAX_BACKEND_EVENTS_PER_SECOND`    | `applications[].app_max_backend_events_per_second`    | int              | App max backend events per second (0 for unlimited)   | `0`                |
+| `--app-max-client-events-per-second`     | `APP_MAX_CLIENT_EVENTS_PER_SECOND`     | `applications[].app_max_client_events_per_second`     | int              | App max client events per second (0 for unlimited)    | `0`                |
+| `--app-max-read-requests-per-second`     | `APP_MAX_READ_REQUESTS_PER_SECOND`     | `applications[].app_max_read_requests_per_second`     | int              | App max read requests per second (0 for unlimited)    | `0`                |
+| `--app-max-presence-members-per-channel` | `APP_MAX_PRESENCE_MEMBERS_PER_CHANNEL` | `applications[].app_max_presence_members_per_channel` | int              | App max presence members per channel                  | `100`              |
+| `--app-max-presence-member-size-in-kb`   | `APP_MAX_PRESENCE_MEMBER_SIZE_IN_KB`   | `applications[].app_max_presence_member_size_in_kb`   | int              | App max presence member size in KB                    | `10`               |
+| `--app-max-channel-name-length`          | `APP_MAX_CHANNEL_NAME_LENGTH`          | `applications[].app_max_channel_name_length`          | int              | App max channel name length                           | `200`              |
+| `--app-max-event-channels-at-once`       | `APP_MAX_EVENT_CHANNELS_AT_ONCE`       | `applications[].app_max_event_channels_at_once`       | int              | App max event channels at once                        | `10`               |
+| `--app-max-event-name-length`            | `APP_MAX_EVENT_NAME_LENGTH`            | `applications[].app_max_event_name_length`            | int              | App max event name length                             | `200`              |
+| `--app-max-event-payload-in-kb`          | `APP_MAX_EVENT_PAYLOAD_IN_KB`          | `applications[].app_max_event_payload_in_kb`          | int              | App max event payload in KB                           | `10`               |
+| `--app-max-event-batch-size`             | `APP_MAX_EVENT_BATCH_SIZE`             | `applications[].app_max_event_batch_size`             | int              | App max event batch size                              | `10`               |
+| `--app-require-channel-authorization`    | `APP_REQUIRE_CHANNEL_AUTHORIZATION`    | `applications[].app_require_channel_authorization`    | bool             | App require channel authorization                     | `false`            |
+| `--app-has-client-event-webhooks`        | `APP_HAS_CLIENT_EVENT_WEBHOOKS`        | `applications[].app_has_client_event_webhooks`        | bool             | App has client event webhooks                         | `false`            |
+| `--app-has-channel-occupied-webhooks`    | `APP_HAS_CHANNEL_OCCUPIED_WEBHOOKS`    | `applications[].app_has_channel_occupied_webhooks`    | bool             | App has channel occupied webhooks                     | `false`            |
+| `--app-has-channel-vacated-webhooks`     | `APP_HAS_CHANNEL_VACATED_WEBHOOKS`     | `applications[].app_has_channel_vacated_webhooks`     | bool             | App has channel vacated webhooks                      | `false`            |
+| `--app-has-member-added-webhooks`        | `APP_HAS_MEMBER_ADDED_WEBHOOKS`        | `applications[].app_has_member_added_webhooks`        | bool             | App has member added webhooks                         | `false`            |
+| `--app-has-member-removed-webhooks`      | `APP_HAS_MEMBER_REMOVED_WEBHOOKS`      | `applications[].app_has_member_removed_webhooks`      | bool             | App has member removed webhooks                       | `false`            |
+| `--app-has-cache-miss-webhooks`          | `APP_HAS_CACHE_MISS_WEBHOOKS`          | `applications[].app_has_cache_miss_webhooks`          | bool             | App has cache miss webhooks                           | `false`            |
+| `--app-has-webhook-batching-enabled`     | `APP_HAS_WEBHOOK_BATCHING_ENABLED`     | `applications[].app_has_webhook_batching_enabled`     | bool             | App has webhook batching enabled                      | `false`            |
+| `--app-webhooks-enabled`                 | `APP_WEBHOOKS_ENABLED`                 | `applications[].app_webhooks_enabled`                 | bool             | App webhooks enabled                                  | `false`            |
+
+## JSON Configuration File
+
+The configuration file should be in JSON format and can be specified with the `--config` flag. Here's an example structure:
+
+```json
+{
+  "server": {
+    "adapter_driver": "redis",
+    "queue_driver": "redis",
+    "cache_driver": "redis",
+    "app_manager": "array",
+    "port": 6001,
+    "bind_address": "0.0.0.0",
+    "log_level": "info",
+    "app_env": "production",
+    "env_file": "./.env",
+    "redis_url": "localhost:6379",
+    "redis_prefix": "pusher",
+    "redis_tls": false,
+    "redis_cluster_mode": false
+  },
+  "applications": [
+    {
+      "app_id": "123",
+      "app_key": "app1key",
+      "app_secret": "app1secret",
+      "app_activity_timeout": 60,
+      "app_max_presence_members_per_channel": 100,
+      "app_max_presence_member_size_in_kb": 10,
+      "app_require_channel_authorization": false,
+      "app_enable_client_messages": true,
+      "app_webhooks_enabled": false
+    },
+    {
+      "app_id": "456",
+      "app_key": "app2key",
+      "app_secret": "app2secret"
+    }
+  ]
+}
+```
+
+## Component Descriptions
+
+### Adapter Driver
+This manages the backend communication channel for multi-node deployments. While any option works for a single-node setup, redis is required for multiple nodes.
+
+Currently supported drivers:
+* **local** - For single-node deployments
+* **redis** - For multi-node deployments
+
+### Queue Driver
+Manages the preparation and delivery of webhook events. The queue system prevents delays in event delivery and improves system stability under high loads.
+
+Currently supported drivers:
+* **local** - Events are sent immediately by the node that received them. Not recommended for production as it may cause processing delays or crashes under high volumes.
+* **redis** - Events are sent to a redis queue for processing, enabling better scaling and reliability. Each node monitors the queue with a background process.
 
 
-## TODO
-- [ ] Support for terminating user connections
+### Cache Driver
+Manages channel caching for improved performance.
+
+Currently supported drivers:
+* **local** - In-memory cache for single node deployments
+* **redis** - Distributed cache for multi-node deployments
+
+
+## Running the Server
+```bash
+# Basic run with defaults
+socket-rush
+
+# Run with specific port and Redis
+socket-rush --port 8080 --adapter-manager redis --redis-url redis://my-redis:6379
+
+# Run with a config file
+socket-rush --config ./config.json
+
+# Run with a specific app configuration
+socket-rush --default-app-id 123 --default-app-key my-key --default-app-secret my-secret
+```
+
+## Usage with Docker
+```bash
+docker run -p 6001:6001 \
+  -e APP_ID=123 \
+  -e APP_KEY=my-key \
+  -e APP_SECRET=my-secret \
+  socketrush/socketrush
+```
+
+## Still To Do
 - [ ] Watchlist events?
-- [ ] Implement context watchers/timeouts for more actions either within storageLocal or the hub
 - [ ] Implement socket-id exclusion to match official spec https://pusher.com/docs/channels/server_api/excluding-event-recipients/
 - [ ] Batch webhooks
 - [ ] Tests - so far I have 0 tests
@@ -36,127 +166,6 @@ Still in the development phase, though some basic functionality is there.
 - [ ] App Manager: Dynamo
 - [ ] App Manager: Mysql/Postgres
 - [x] SNS support (not yet tested)
-- [ ] Benchmarking
 - [ ] issue with sending webhooks for private-encrypted channels; fails to decrypt?
 - [ ] TLS support?
 - [ ] CORS
-- [ ] More stuff i'm sure, will update as i think of it
-
-## Known Issues
-- [ ] "User Authentication" not fully working.
-
-## Things i'm not happy with...
-
-This is broken up to be as flexible as possible. The following components are built to an interface (along with supported drivers thus far):
-- Adapter - used for inter-node communication (local, redis)
-- App Manager - Store/load list of apps (so far only one app supported via env vars)
-- Queue - used for dispatching webhook events  (local, SQS, Redis)
-- Webhook - how to send events (http, sns)
-
-## Deployment
-You will need to set some environment variables to use this.
-
-### Required Env Vars
-| Variable         | Description                                                                                                                                                                                                                                                                      |
-|------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| APP_ID           | *REQUIRED* **Numeric** The app id to use. This is used to identify the app in the storage and pubsub.                                                                                                                                                                            |
-| APP_SECRET       | *REQUIRED* The app secret to use. This is used for authenticating server to server and webhook requests                                                                                                                                                                          |
-| APP_KEY          | *REQUIRED*  The app key to use. This is used to identify the app in the storage and pubsub.                                                                                                                                                                                      |
-
-
-### Redis Env Vars (only required if using redis)
-| Variable         | Description                                                                                                                                                                                                                                                                      |
-|------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| REDIS_URL     | The redis URL to use if using redis. Must include the port number (redis://localhost:6379)      |
-| REDIS_USE_TLS | *Default: false* Whether or not the redis connection should use TLS                             |
-| REDIS_PREFIX  | *Default: pusher* The prefix to use for the redis keys. This is used to prevent key collisions. |
-| REDIS_CLUSTER | *Default: false* Whether or not to initialize redis as a cluster.                               |
-
-### Driver Env Vars
-These variables determine which drivers/implementations to use for various backend services
-
-| Variable         | Description                                                                                                                            |
-|------------------|----------------------------------------------------------------------------------------------------------------------------------------|
-| PUBSUB_MANAGER   | *Default: local* [ redis \| local ]                                                                                                    |
-| STORAGE_MANAGER  | *Default: redis* [ redis \| local ]                                                                                                    |
-|WEBHOOK_MANAGER| *Default: http* The webhook manager to use. [ http \| sns ]                                                                            |
-|WEBHOOK_URL| *required if webhooks are enabled* The URL to send the webhooks to. This is used if using the http webhook manager.                    |
-|DISPATCHER_MANAGER| *Default: local* The dispatcher manager to use for queueing webhooks to be sent. [ local \| redis ]                                    |
-|SNS_TOPIC_ARN| *required if using sns* The SNS topic ARN to use if using the sns webhook manager. This is used to send the webhooks to the SNS topic. |
-|SNS_REGION| *required if using sns* The AWS region to use if using the sns webhook manager. This is used to send the webhooks to the SNS topic.    |
-|CHANNEL_CACHE_MANAGER| *Default: local* The channel cache manager to use. [ local \| redis ]                                                                  |
-
-
-### Other Optional Env Vars
-| Variable         | Description                                                                                                                                                                                                                                                                      |
-|------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-|APP_ENV| *Default: production* The environment to use. This is used to determine the level of output by the web server. [ production \| development ]                                                                                                                                     |
-| LOG_LEVEL        | *Default: info* The log level to use. [error \| warn \| info \| debug \| trace ]                                                                                                                                                                                                 |
-| ACTIVITY_TIMEOUT | *Default: 60* How often should clients ping the server, in seconds                                                                                                                                                                                                               |
-|MAX_PRESENCE_USERS | *Default: 100* The maximum number of users in a presence channel. This is used to limit the number of users in a presence channel. If this is reached, the oldest user will be removed from the channel. This is used to prevent memory leaks and to keep the server responsive. |
-|MAX_PRESENCE_USER_DATA_KB| *Default: 10* The maximum size of the user data in a presence channel. This is used to limit the size of the user data in a presence channel. This is used to keep the server responsive.                                                                                        |
-|BIND_PORT | *Default: 6001* The port to bind the server to. This is used to connect to the server.                                                                                                                                                                                           |
-|WEBHOOK_ENABLED| *Default: false* Whether or not to enable webhooks.                                                                                                                                                                                                                              |
-
-
-
-## Components
-#### Adapter Manager
-This is the backend communication channel, used to support multi-node deployments. You can use any option in a single-node setup, but if you are using multiple nodes, you will need to use redis.
-
-Currently supported drivers are:
-* local 
-* redis 
-
-#### Queue
-This is used for preparing the webhook events to be sent. It is a means for queueing the delivery of the events. The default option is 'local'.
-
-Currently supported drivers are:
-* local - (default) events are sent immediately by the node that received the event. This is not recommended for production use, as it can cause delays in the delivery of the events, or could cause the server to crash under high volumes due to exhausting the channel buffer
-* redis - events are sent to a redis queue, which can be processed by a separate worker. This is recommended for production use, as it allows for better scaling and reliability of the event delivery. Every node by default will monitor the queue with a separate background process, processing events one at a time.
-
-NOT YET IMPLEMENTED: When using redis dispatcher, you can choose to run a dedicated worker node that only processes events. 
-
-#### Webhook
-How webhooks are sent. The most common use is an HTTP POST request to a URL. See [Pusher docs](https://pusher.com/docs/channels/server_api/webhooks/) for more info about the structure and authentication of these requests.
-
-Currently supported drivers are:
-* http - (default) sends a POST request to the URL specified in the webhook config. This is the most common use case, and is recommended for most users.
-* sns - send requests as an SNS message, using the same payload as the HTTP requests. This is useful for sending events to AWS services, such as Lambda or SQS. When using SNS, batch events is disabled/ignored. This is not yet implemented, but will be in the future.
-
-## Development
-I tried to put as much as I could into a Makefile.
-
-### Starting the websocket server
-`make run`
-
-### Starting the development auth server
-DO NOT USE THIS IN PRODUCTION, it is for development purposes only.
-
-This server is used to authenticate private/presence channels. 
-
-It will authenticate all requests, using the current minute as the user id (for presence channels).
-
-This server also exposes some endpoints to test requests to the websocket server API for things like channel counts and info, as well as an endpoint for triggering a websocket message as if it came from your internal app.
-
-The server is set to run on port 8099.
-
-To start the auth server, run `make auth`
-
-### Starting the demo UI
-`make ui`
-
-This will start a simple UI that connects to the websocket server and allows you to test the server. It will usually run on 5379, but check the console output to confirm.
-
-#### Optional query parameters
-You can add some URL query parameters when connecting to the demo UI to test some features.
-
-* Forcing a specific user ID: `user_id=bob`
-* Force a specific websocket host/port: `host=localhost` `port=6001`
-* example: `http://localhost:5379?user_id=bob&host=localhost&port=6001`
-
-Note: when you specify a user id, the UI will automatically connect a handful of additional channels for that user id
-
-You can use the 📡 button to trigger a message to be sent on that channel, confirming that it is received by all clients that are connected to it.
-
-To test a client side message (whisper), select the radio button next to a connected channel, then type into the whisper box and hit send. Client-side messages are not sent to the current client, so to test this, make sure you have another window open with a user connected to the channel you are testing; you should see the client message on all *other* windows.

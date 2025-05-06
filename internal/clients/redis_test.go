@@ -1,12 +1,14 @@
 package clients
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/go-redis/redis"
+	// "github.com/go-redis/redis"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -22,7 +24,7 @@ func setupMiniRedis(t *testing.T) (*miniredis.Miniredis, redis.UniversalClient) 
 	})
 
 	// Verify connection is working
-	_, err = client.Ping().Result()
+	_, err = client.Ping(context.Background()).Result()
 	if err != nil {
 		t.Fatalf("Could not connect to miniredis: %v", err)
 	}

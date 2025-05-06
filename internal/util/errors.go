@@ -67,7 +67,7 @@ var (
 		ErrCodeInvalidChannel:          "Invalid channel",
 		ErrCodeAlreadySubscribed:       "Already subscribed",
 		ErrCodeMaxPresenceSubscribers:  "presence channel user limit reached",
-		ErrCodePresenceUserDataTooMuch: "presence channel user data exceeds limit (MAX_PRESENCE_USER_DATA_KB)",
+		ErrCodePresenceUserDataTooMuch: "presence channel user data exceeds limit (APP_MAX_PRESENCE_USER_DATA_KB)",
 		ErrCodePresenceUserIDTooLong:   "presence channel limit to 128 characters user id",
 		ErrCodeNotSubscribed:           "Not subscribed",
 
@@ -88,8 +88,7 @@ var (
 		ErrCodeWebsocketAbnormalClosure: "Websocket abnormal closure",
 	}
 
-	ErrInvalidChannel                 = errors.New("invalid channel name")
-	ErrAPIReqEventChannelsSizeTooLong = errors.New("request event channels size too big, limit to 100")
+	ErrInvalidChannel = errors.New("invalid channel name")
 
 	// ErrAPIReqEventDataTooLarge        = fmt.Errorf("request event data too large, limit to %dkb", constants.MaxEventSizeKb)
 )
