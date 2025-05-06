@@ -18,8 +18,6 @@ import (
 	"pusher/log"
 )
 
-// this will replace the Session
-
 type WebSocket struct {
 	ID                 constants.SocketID
 	app                *apps.App
@@ -27,13 +25,12 @@ type WebSocket struct {
 	PresenceData       map[constants.ChannelName]*pusherClient.MemberData
 	conn               *websocket.Conn
 	closed             bool
-	// done               chan struct{}
-	mutex             sync.Mutex
-	sendMutex         sync.Mutex
-	server            *Server
-	userID            string
-	userAuthChannel   chan bool
-	userHasAuthorized bool
+	mutex              sync.Mutex
+	sendMutex          sync.Mutex
+	server             *Server
+	userID             string
+	userAuthChannel    chan bool
+	userHasAuthorized  bool
 }
 
 // Send transmits a message to the connected client
