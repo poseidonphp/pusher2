@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"time"
 
 	pusherClient "github.com/pusher/pusher-http-go/v5"
 	"pusher/internal/constants"
@@ -16,11 +17,22 @@ type LocalAdapter struct {
 }
 
 func (l *LocalAdapter) createBlankNamespace() *Namespace {
-	return &Namespace{
+	n := &Namespace{
 		Channels: make(map[constants.ChannelName][]constants.SocketID),
 		Sockets:  make(map[constants.SocketID]*WebSocket),
 		Users:    make(map[string][]constants.SocketID),
 	}
+
+	// start a go routine to call n.CompactMaps() every 5 minutes
+	go func() {
+		for {
+			// wait for 5 minutes
+			<-time.After(5 * time.Minute)
+			n.CompactMaps()
+		}
+	}()
+
+	return n
 }
 
 func (l *LocalAdapter) Init() error {
@@ -116,11 +128,14 @@ func (l *LocalAdapter) Send(appID constants.AppID, channel constants.ChannelName
 }
 
 func (l *LocalAdapter) TerminateUserConnections(appID constants.AppID, userID string) {
-	l.mutex.Lock()
-	defer l.mutex.Unlock()
+	// l.mutex.Lock()
 	if _, ok := l.Namespaces[appID]; ok {
+		// l.mutex.Unlock()
 		l.Namespaces[appID].TerminateUserConnections(userID)
+	} else {
+		// l.mutex.Unlock()
 	}
+	log.Logger().Tracef("Terminated connections for user %s in app %s", userID, appID)
 }
 
 func (l *LocalAdapter) Disconnect() {
@@ -142,7 +157,7 @@ func (l *LocalAdapter) ClearNamespaces() {
 	l.Namespaces = make(map[constants.AppID]*Namespace)
 }
 
-func (l *LocalAdapter) GetSockets(appID constants.AppID, onlyLocal bool) map[constants.SocketID]*WebSocket {
+func (l *LocalAdapter) GetSockets(appID constants.AppID, _ bool) map[constants.SocketID]*WebSocket {
 	l.mutex.Lock()
 	if _, ok := l.Namespaces[appID]; !ok {
 		l.mutex.Unlock()
@@ -153,7 +168,7 @@ func (l *LocalAdapter) GetSockets(appID constants.AppID, onlyLocal bool) map[con
 	return l.Namespaces[appID].GetSockets()
 }
 
-func (l *LocalAdapter) GetSocketsCount(appID constants.AppID, onlyLocal bool) int64 {
+func (l *LocalAdapter) GetSocketsCount(appID constants.AppID, _ bool) int64 {
 	l.mutex.Lock()
 	if _, ok := l.Namespaces[appID]; !ok {
 		l.mutex.Unlock()
@@ -175,7 +190,7 @@ func (l *LocalAdapter) GetChannels(appID constants.AppID, _ bool) map[constants.
 	return channels
 }
 
-func (l *LocalAdapter) GetChannelsWithSocketsCount(appID constants.AppID, onlyLocal bool) map[constants.ChannelName]int64 {
+func (l *LocalAdapter) GetChannelsWithSocketsCount(appID constants.AppID, _ bool) map[constants.ChannelName]int64 {
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
 	if _, ok := l.Namespaces[appID]; !ok {

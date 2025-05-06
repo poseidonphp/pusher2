@@ -509,14 +509,7 @@ func (ha *HorizontalAdapter) onRequest(channel string, msg string) (dataToSend [
 	switch request.Type {
 	case SOCKETS:
 		sockets := ha.GetSockets(appId, true)
-		if err != nil {
-			log.Logger().Errorf("Error getting sockets: %v", err)
-			return nil, err
-		}
-		// var localSockets []*WebSocket
-		// for _, socket := range sockets {
-		// 	localSockets = append(localSockets, socket)
-		// }
+
 		_data2 := &HorizontalResponse{
 			RequestID: request.RequestID,
 			Sockets:   sockets,
@@ -527,10 +520,6 @@ func (ha *HorizontalAdapter) onRequest(channel string, msg string) (dataToSend [
 	case CHANNEL_SOCKETS:
 		if ch, exists := request.HorizontalRequestOptions.Opts["channel"]; exists {
 			localSockets := ha.GetChannelSockets(appId, ch, true)
-			if err != nil {
-				log.Logger().Errorf("Error getting channel sockets: %v", err)
-				return nil, err
-			}
 			_data2 := &HorizontalResponse{
 				RequestID: request.RequestID,
 				Sockets:   localSockets,
@@ -541,11 +530,10 @@ func (ha *HorizontalAdapter) onRequest(channel string, msg string) (dataToSend [
 		break
 	case CHANNELS:
 		localChannels := ha.GetChannels(appId, true)
-		// var channels []constants.ChannelName
+
 		var channels map[constants.ChannelName][]constants.SocketID
 		for ch, sockets := range localChannels {
 			channels[ch] = sockets
-			// channels = append(channels, ch)
 		}
 
 		_data2 := &HorizontalResponse{
@@ -556,10 +544,6 @@ func (ha *HorizontalAdapter) onRequest(channel string, msg string) (dataToSend [
 		return dataToSend, nil
 	case CHANNELS_WITH_SOCKETS_COUNT:
 		localCounts := ha.GetChannelsWithSocketsCount(appId, true)
-		if err != nil {
-			log.Logger().Errorf("Error getting channels with sockets count: %v", err)
-			return nil, err
-		}
 
 		_data2 := &HorizontalResponse{
 			RequestID:                request.RequestID,
@@ -571,10 +555,7 @@ func (ha *HorizontalAdapter) onRequest(channel string, msg string) (dataToSend [
 	case CHANNEL_MEMBERS:
 		if ch, exists := request.HorizontalRequestOptions.Opts["channel"]; exists {
 			localMembers := ha.GetChannelMembers(appId, constants.ChannelName(ch), true)
-			if err != nil {
-				log.Logger().Errorf("Error getting channel members: %v", err)
-				return nil, err
-			}
+
 			_data2 := &HorizontalResponse{
 				RequestID: request.RequestID,
 				Members:   localMembers,
@@ -586,10 +567,7 @@ func (ha *HorizontalAdapter) onRequest(channel string, msg string) (dataToSend [
 	// SOCKETS_COUNT returns SocketCountRequestResponse
 	case SOCKETS_COUNT:
 		localCount := ha.GetSocketsCount(appId, true)
-		if err != nil {
-			log.Logger().Errorf("Error getting sockets count: %v", err)
-			return nil, err
-		}
+
 		_data2 := &HorizontalResponse{
 			RequestID:  request.RequestID,
 			TotalCount: localCount,
@@ -600,10 +578,7 @@ func (ha *HorizontalAdapter) onRequest(channel string, msg string) (dataToSend [
 	case CHANNEL_MEMBERS_COUNT: // returns SocketCountRequestResponse
 		if ch, exists := request.HorizontalRequestOptions.Opts["channel"]; exists {
 			localCount := ha.GetChannelMembersCount(appId, ch, true)
-			if err != nil {
-				log.Logger().Errorf("Error getting channel members count: %v", err)
-				return nil, err
-			}
+
 			_data2 := &HorizontalResponse{
 				RequestID:  request.RequestID,
 				TotalCount: int64(localCount),
@@ -647,10 +622,7 @@ func (ha *HorizontalAdapter) onRequest(channel string, msg string) (dataToSend [
 	case PRESENCE_CHANNELS_WITH_USERS_COUNT:
 		localCounts := ha.GetPresenceChannelsWithUsersCount(appId, true)
 		log.Logger().Infof("localCounts: %v", localCounts)
-		if err != nil {
-			log.Logger().Errorf("Error getting presence channels with users count: %v", err)
-			return nil, err
-		}
+
 		_data2 := &HorizontalResponse{
 			RequestID:                request.RequestID,
 			ChannelsWithSocketsCount: localCounts,
@@ -695,6 +667,12 @@ func (ha *HorizontalAdapter) onResponse(channel string, msg string) {
 // sendRequest sends a request to other nodes to get data from them
 func (ha *HorizontalAdapter) sendRequest(appId constants.AppID, requestType HorizontalRequestType, requestExtra *HorizontalRequestExtra, requestOptions *HorizontalRequestOptions) *HorizontalResponse {
 	requestID := uuid.NewString()
+	defer func() {
+		ha.mutex.Lock()
+		delete(ha.requests, requestID)
+		ha.mutex.Unlock()
+	}()
+
 	newRequest := &HorizontalRequest{
 		requestID:           requestID,
 		appID:               appId,
@@ -767,13 +745,7 @@ func (ha *HorizontalAdapter) waitForResponse(request *HorizontalRequest) {
 	}
 	// set a timeout, and monitor channel for incoming messages then process the response
 	finalResponse := &HorizontalResponse{
-		RequestID: request.requestID,
-		// Sockets:                  make(map[constants.SocketID]*WebSocket),
-		// Members:                  make(map[string]*pusherClient.MemberData),
-		// Channels:                 make(map[constants.ChannelName][]constants.SocketID),
-		// ChannelsWithSocketsCount: make(map[constants.ChannelName]int64),
-		// TotalCount:               0,
-		// Exists:                   false,
+		RequestID:                request.requestID,
 		Sockets:                  request.sockets,
 		Members:                  request.members,
 		Channels:                 request.channels,
@@ -873,6 +845,8 @@ func (ha *HorizontalAdapter) waitForResponse(request *HorizontalRequest) {
 							}
 						}
 					}
+				default:
+					log.Logger().Errorf("Unknown request type: %d", request.requestType)
 				}
 			}
 			// check if the number of messages received is equal to the number of subscribers

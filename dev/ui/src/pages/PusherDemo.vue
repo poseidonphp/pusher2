@@ -357,6 +357,9 @@ onMounted(async () => {
   const port = urlParams.get("port") || "6001"
   let uid = urlParams.get("user_id") || ""
   let loadChannels = urlParams.get("load_channels") || "false"
+  let onlyLoadTheseChannels = urlParams.get("channels") || ""
+  let onlyLoadTheseChannelsArray = onlyLoadTheseChannels.split(",").map(c => c.trim()).filter(c => c.length > 0)
+
   let connectUserChannels = true
   if (uid == "" && loadChannels == "false") {
     connectUserChannels = false
@@ -385,9 +388,12 @@ onMounted(async () => {
     pusherSocketId.value = store.echo?.connector.pusher.connection.socket_id ?? "unknown"
   }, 500)
 
-  joinPresenceChannel()
+  if (onlyLoadTheseChannelsArray.length == 0) {
+    joinPresenceChannel()
+  }
 
-  if(connectUserChannels) {
+
+  if(connectUserChannels && onlyLoadTheseChannelsArray.length == 0) {
     channelToJoin.value = "user-" + uid
     channelToJoinType.value = "private"
     joinNewChannel(channelToJoin.value)
@@ -398,6 +404,27 @@ onMounted(async () => {
     channelToJoinType.value = "public"
     joinNewChannel("all-public-users")
     channelToJoin.value = ""
+  } else if(onlyLoadTheseChannelsArray.length > 0) {
+    for (const channel of onlyLoadTheseChannelsArray) {
+      if (channel.length > 0) {
+        // channelToJoin.value = channel
+        const chPrefix = channel.split("-")[0]
+        switch (chPrefix) {
+          case "private":
+            channelToJoinType.value = "private"
+            break
+          case "encrypted":
+            channelToJoinType.value = "encrypted"
+            break
+          case "presence":
+            channelToJoinType.value = "presence"
+            break
+          default:
+            channelToJoinType.value = "public"
+        }
+        joinNewChannel(channel)
+      }
+    }
   }
 
   store.echo?.connector.pusher.user.bind("myTestEvent", (data: any) => {

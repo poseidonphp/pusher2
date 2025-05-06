@@ -42,12 +42,38 @@ func (n *Namespace) RemoveSocket(wsID constants.SocketID) {
 	for channel := range n.Channels {
 		channelKeys = append(channelKeys, channel)
 	}
+	n.mutex.Unlock()
+	// Also ensure the user is removed if this is a user socket
+	if socket, exists := n.Sockets[wsID]; exists && socket.userID != "" {
+		_ = n.RemoveUser(socket)
+	}
+
+	n.mutex.Lock()
 	if _, ok := n.Sockets[wsID]; ok {
+		n.Sockets[wsID] = nil
 		delete(n.Sockets, wsID)
 	}
 	n.mutex.Unlock()
-	_ = n.RemoveFromChannel(wsID, channelKeys)
+
+	// Remove socket from all channels
+	for _, channel := range channelKeys {
+		n.RemoveFromChannel(wsID, []constants.ChannelName{channel})
+	}
+
 }
+
+// func (n *Namespace) RemoveSocket(wsID constants.SocketID) {
+// 	n.mutex.Lock()
+// 	var channelKeys []constants.ChannelName
+// 	for channel := range n.Channels {
+// 		channelKeys = append(channelKeys, channel)
+// 	}
+// 	if _, ok := n.Sockets[wsID]; ok {
+// 		delete(n.Sockets, wsID)
+// 	}
+// 	n.mutex.Unlock()
+// 	_ = n.RemoveFromChannel(wsID, channelKeys)
+// }
 
 func (n *Namespace) AddToChannel(ws *WebSocket, channel constants.ChannelName) int64 {
 	n.mutex.Lock()
@@ -75,6 +101,7 @@ func (n *Namespace) RemoveFromChannel(websocketId constants.SocketID, channels [
 			}
 			// if the Channel is empty, delete it
 			if len(n.Channels[channel]) == 0 {
+				n.Channels[channel] = nil
 				delete(n.Channels, channel)
 				return 0
 			}
@@ -197,7 +224,7 @@ func (n *Namespace) AddUser(ws *WebSocket) error {
 	}
 
 	if !slices.Contains(n.Users[ws.userID], ws.ID) {
-		log.Logger().Warnf("Adding %s to %s userID", ws.ID, ws.userID)
+		log.Logger().Tracef("Adding %s to %s userID", ws.ID, ws.userID)
 		n.Users[ws.userID] = append(n.Users[ws.userID], ws.ID)
 	}
 	return nil
@@ -253,7 +280,7 @@ func (n *Namespace) GetPresenceChannelsWithUsersCount() map[constants.ChannelNam
 	channels := n.GetChannels()
 	list := make(map[constants.ChannelName]int64)
 
-	for channel, _ := range channels {
+	for channel := range channels {
 		if util.IsPresenceChannel(channel) {
 			members := n.GetChannelMembers(channel)
 
@@ -261,4 +288,31 @@ func (n *Namespace) GetPresenceChannelsWithUsersCount() map[constants.ChannelNam
 		}
 	}
 	return list
+}
+
+func (n *Namespace) CompactMaps() {
+	n.mutex.Lock()
+	defer n.mutex.Unlock()
+
+	// Create new maps with appropriate capacity
+	newChannels := make(map[constants.ChannelName][]constants.SocketID, len(n.Channels))
+
+	// Copy only non-empty channels
+	for channel, sockets := range n.Channels {
+		if sockets != nil && len(sockets) > 0 {
+			newChannels[channel] = sockets
+		}
+	}
+
+	n.Channels = newChannels
+
+	// Similar process for other maps
+	// do the same for n.Sockets
+	newSockets := make(map[constants.SocketID]*WebSocket, len(n.Sockets))
+	for socketID, socket := range n.Sockets {
+		if socket != nil {
+			newSockets[socketID] = socket
+		}
+	}
+	n.Sockets = newSockets
 }

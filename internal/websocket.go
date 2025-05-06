@@ -27,12 +27,13 @@ type WebSocket struct {
 	PresenceData       map[constants.ChannelName]*pusherClient.MemberData
 	conn               *websocket.Conn
 	closed             bool
-	done               chan struct{}
-	mutex              sync.Mutex
-	sendMutex          sync.Mutex
-	server             *Server
-	userID             string
-	userAuthChannel    chan struct{}
+	// done               chan struct{}
+	mutex             sync.Mutex
+	sendMutex         sync.Mutex
+	server            *Server
+	userID            string
+	userAuthChannel   chan bool
+	userHasAuthorized bool
 }
 
 // Send transmits a message to the connected client
@@ -48,7 +49,7 @@ func (w *WebSocket) Send(msg []byte) {
 	_ = w.conn.SetWriteDeadline(time.Now().Add(constants.WriteWait))
 	if err := w.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
 		w.closed = true
-		close(w.done)
+		// close(w.done)
 	}
 	w.sendMutex.Unlock()
 	// reset the read timeout after a successful send, because the pusher client will reset it on receive
@@ -63,12 +64,12 @@ func (w *WebSocket) Close() {
 // closeConnection closes the WebSocket connection with a specific error code
 // It unsubscribes from all channels and removes socket from adapter
 func (w *WebSocket) closeConnection(code util.ErrorCode) {
-
 	w.tracef("closing connection with code: %d", code)
 	w.unsubscribeFromAllChannels()
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 	if w.app != nil && w.server != nil && w.server.Adapter != nil {
+
 		_ = w.server.Adapter.RemoveSocket(w.app.ID, w.ID)
 		// todo metrics mark disconnection
 	}
@@ -95,9 +96,8 @@ func (w *WebSocket) closeConnection(code util.ErrorCode) {
 		return
 	}
 	w.closed = true
-	close(w.done)
-
-	// TODO remove the socket from the namespace
+	// close(w.done)
+	w.Cleanup()
 }
 
 // Listen continuously reads messages from the WebSocket connection
@@ -192,6 +192,14 @@ func (w *WebSocket) parseIncomingPayload(msgRaw []byte) *util.Error {
 	return returnCode
 }
 
+func (w *WebSocket) subscribeToUserChannel() {
+	channelName := constants.SocketRushServerToUserPrefix + w.userID
+
+	w.Send(payloads.SubscriptionSucceededPack(channelName, "{}"))
+	return
+
+}
+
 // handleSubscribeRequest processes a client's Channel subscription request
 // It validates the Channel name, joins the Channel, and sends confirmation
 func (w *WebSocket) handleSubscribeRequest(msgRaw []byte) *util.Error {
@@ -208,6 +216,13 @@ func (w *WebSocket) handleSubscribeRequest(msgRaw []byte) *util.Error {
 	}
 
 	channel := subscribePayload.Data.Channel
+
+	// Check if we are subscribing to a user channel
+	if w.userID != "" && channel == constants.SocketRushServerToUserPrefix+w.userID {
+		w.subscribeToUserChannel()
+		return nil
+	}
+
 	channelErr := util.ValidateChannelName(channel, w.app.MaxChannelNameLength)
 	if channelErr != nil {
 		w.errorf("%s", channelErr)
@@ -217,6 +232,7 @@ func (w *WebSocket) handleSubscribeRequest(msgRaw []byte) *util.Error {
 
 	// Join the Channel
 	channelObj := CreateChannelFromString(w.app, channel)
+
 	joinResponse := channelObj.Join(w.server.Adapter, w, subscribePayload)
 	if !joinResponse.Success {
 		w.errorf("Failed to join Channel: %s", joinResponse.Message)
@@ -225,9 +241,11 @@ func (w *WebSocket) handleSubscribeRequest(msgRaw []byte) *util.Error {
 		case util.ErrCodeSubscriptionAccessDenied:
 			w.errorf("Subscription access denied: %s", joinResponse.Message)
 			w.Send(payloads.SubscriptionErrPack(channelObj.Name, "AuthError", joinResponse.Message, int(joinResponse.ErrorCode)))
+			return util.NewError(util.ErrCodeSubscriptionAccessDenied)
 		default:
 			w.errorf("Failed to join Channel: %s", joinResponse.Message)
 			w.Send(payloads.SubscriptionErrPack(channelObj.Name, "Unknown", joinResponse.Message, int(joinResponse.ErrorCode)))
+			return util.NewError(util.ErrCodeGenericReconnect)
 		}
 	}
 
@@ -237,6 +255,21 @@ func (w *WebSocket) handleSubscribeRequest(msgRaw []byte) *util.Error {
 		w.SubscribedChannels[channelObj.Name] = channelObj
 	}
 	w.mutex.Unlock()
+
+	// Check if channel authorization is required
+	w.mutex.Lock()
+	if channelObj.RequiresAuth && !w.userHasAuthorized && w.userAuthChannel != nil {
+		// check if the user id is set on the channel response, and if the socket user id is not already set
+		// we will not overwrite the user ID if it was set by the sign-in method
+		if w.userID == "" && joinResponse.Member != nil && joinResponse.Member.UserID != "" {
+			w.userID = joinResponse.Member.UserID
+		}
+		w.mutex.Unlock()
+
+		w.signalAuthenticated()
+	} else {
+		w.mutex.Unlock()
+	}
 
 	// line 384 (ws-handler.ts), do i need to do this?
 
@@ -259,10 +292,7 @@ func (w *WebSocket) handleSubscribeRequest(msgRaw []byte) *util.Error {
 	}
 
 	members := w.server.Adapter.GetChannelMembers(w.app.ID, channelObj.Name, false)
-	if err != nil {
-		w.errorf("Error getting Channel members: %s", err)
-		return util.NewError(util.ErrCodeInvalidPayload)
-	}
+
 	log.Logger().Debugf("Members: %v", members)
 
 	w.mutex.Lock()
@@ -270,12 +300,6 @@ func (w *WebSocket) handleSubscribeRequest(msgRaw []byte) *util.Error {
 	w.mutex.Unlock()
 
 	log.Logger().Debugf("PresenceData: %v", w.PresenceData)
-
-	// err = w.server.Adapter.AddSocket(w.app.ID, w)
-	// if err != nil {
-	// 	w.errorf("Error adding socket to adapter: %s", err)
-	// 	// return util.NewError(util.ErrCodeInvalidPayload)
-	// }
 
 	// If the member already exists in the Channel, don't resend the member_added event
 	w.tracef("Checking if %s exists in Channel %s", joinResponse.Member.UserID, channelObj.Name)
@@ -418,6 +442,9 @@ func (w *WebSocket) unsubscribeFromChannel(channelObj *Channel) {
 			w.server.QueueManager.SendChannelVacated(w.app, channelObj.Name)
 			log.Logger().Debugf("Channel %s is now empty", channelObj.Name)
 		}
+		w.mutex.Lock()
+		delete(w.SubscribedChannels, channelObj.Name)
+		w.mutex.Unlock()
 	} else {
 		w.errorf("Failed to leave Channel: %s", channelObj.Name)
 	}
@@ -439,6 +466,7 @@ func (w *WebSocket) unsubscribeFromAllChannels() {
 	for _, channel := range channels {
 		w.unsubscribeFromChannel(channel)
 	}
+	w.SubscribedChannels = nil
 }
 
 // handleClientEvent processes client-generated events
@@ -541,10 +569,7 @@ func (w *WebSocket) handleClientEvent(msgRaw []byte) *util.Error {
 		UserID:  userId,
 	}
 	_messageData := message.ToJson(true)
-	if err != nil {
-		w.errorf("Error marshalling message data: %s", err)
-		return nil
-	}
+
 	_ = w.server.Adapter.Send(w.app.ID, channel, _messageData, w.ID)
 
 	w.server.QueueManager.SendClientEvent(w.app, channel, clientChannelEvent.Event, string(clientChannelEvent.Data), w.ID, userId)
@@ -581,30 +606,67 @@ func (w *WebSocket) handleReadMessageError(err error) {
 	}
 }
 
-// RequireUserAuth sets up a Channel for user authentication
-// When the user is authenticated, the Channel is closed
-// If the time runs out before the Channel is closed, the connection is closed
-func (w *WebSocket) RequireUserAuth() {
-	defer func() {
-		w.tracef("closing user auth Channel")
-	}()
-	w.tracef("Setting up user authentication Channel")
-	w.userAuthChannel = make(chan struct{})
+// WatchForAuthentication sets up a go channel for channel authorization
+// When the user is authenticated, the channel is closed
+// If the time runs out before the channel is closed, the connection is closed
+func (w *WebSocket) WatchForAuthentication() {
+
+	w.tracef("Setting up channel authorization Channel")
+
+	w.mutex.Lock()
+	if w.userAuthChannel != nil {
+		w.mutex.Unlock()
+		w.errorf("Channel authorization Channel already exists")
+		return
+	}
+
+	w.userAuthChannel = make(chan bool, 1)
+	w.mutex.Unlock()
+
 	// set a timeout for the user auth Channel. Listen for the timeout;
 	// if the userAuthChannel is closed before the timeout, close the Channel and stop the time
 	// if the timer expires, close the websocket
 	go func() {
+		timer := time.NewTimer(w.app.AuthorizationTimeout)
+		defer timer.Stop()
+
 		select {
-		case <-w.userAuthChannel:
-			// user auth Channel closed
-			w.tracef("User authentication Channel closed")
-			return
-		case <-time.After(w.app.AuthenticationTimeout):
-			w.errorf("User authentication timeout")
+		case authResult, ok := <-w.userAuthChannel:
+			if ok {
+				w.mutex.Lock()
+				w.userHasAuthorized = authResult
+				w.mutex.Unlock()
+				w.tracef("User authorization completed: %v", authResult)
+			}
+		case <-timer.C:
+			w.errorf("Channel authorization timeout")
 			w.closeConnection(util.ErrCodeUnauthorizedConnection)
 			return
 		}
+
+		// clean up the channel under lock
+		w.mutex.Lock()
+		if w.userAuthChannel != nil {
+			close(w.userAuthChannel)
+			w.userAuthChannel = nil
+		}
+		w.mutex.Unlock()
 	}()
+}
+
+func (w *WebSocket) signalAuthenticated() {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+
+	if w.userAuthChannel != nil && !w.userHasAuthorized {
+		// The channel is still open and user isn't authorized yet
+		select {
+		case w.userAuthChannel <- true:
+			w.tracef("Sent auth success signal")
+		default:
+			w.tracef("Could not send auth signal (channel full or closed)")
+		}
+	}
 }
 
 type UserSigninPayload struct {
@@ -626,16 +688,10 @@ type AuthDataUserData struct {
 }
 
 func (w *WebSocket) handleUserSignin(msgRaw []byte) *util.Error {
-	if !w.app.EnableUserAuthentication {
-		w.errorf("User authentication is not enabled for this app")
-		// w.closeConnection(util.ErrCodeUnauthorizedConnection)
-		return util.NewError(util.ErrCodeUnauthorizedConnection)
-	}
+
 	var signinPayload *UserSigninPayload
 	_ = json.Unmarshal(msgRaw, &signinPayload)
 
-	// var signinData *UserSigninData
-	// _ = json.Unmarshal([]byte(signinPayload.Data), &signinData)
 	var userData *AuthDataUserData
 	_ = json.Unmarshal([]byte(signinPayload.Data.UserData), &userData)
 
@@ -646,18 +702,22 @@ func (w *WebSocket) handleUserSignin(msgRaw []byte) *util.Error {
 	if w.signinTokenIsValid(signinPayload.Data.UserData, signinPayload.Data.Auth) {
 		w.tracef("User token is valid")
 		w.userID = userData.ID
-		// addUser
+		// add user to adapter
 		err := w.server.Adapter.AddUser(w.app.ID, w)
 		if err != nil {
 			w.errorf("Error adding user: %s", err)
 			return util.NewError(util.ErrCodeInvalidPayload, err.Error())
 		}
+
+		// send success response
 		dataPayload := struct {
 			UserData string `json:"user_data"`
 		}{UserData: signinPayload.Data.UserData}
 		_dataPayload, _ := json.Marshal(dataPayload)
 		w.Send(payloads.PayloadPack(constants.PusherSigninSuccess, string(_dataPayload)))
-		close(w.userAuthChannel)
+
+		w.signalAuthenticated()
+
 		return nil
 	} else {
 		w.tracef("User token is invalid")
@@ -693,4 +753,29 @@ func (w *WebSocket) tracef(format string, args ...interface{}) {
 	// log error
 	msg := fmt.Sprintf(format, args...)
 	log.Logger().Tracef("[%s] %s", w.ID, msg)
+}
+
+func (w *WebSocket) Cleanup() {
+	// Close any remaining channels
+	if w.userAuthChannel != nil {
+		close(w.userAuthChannel)
+		w.userAuthChannel = nil
+	}
+
+	// Clear any large data structures
+	w.PresenceData = nil
+	w.SubscribedChannels = nil
+
+	// Any other cleanup needed
+	w.ID = ""
+	w.app = nil
+	w.conn = nil
+	w.closed = false
+	w.server = nil
+	w.userID = ""
+	w.userHasAuthorized = false
+
+	// if w.server != nil {
+	// 	w.server.websocketPool.Put(w)
+	// }
 }
