@@ -1,0 +1,41 @@
+name: Update Go Packages
+
+on:
+  schedule:
+    - cron: '0 19 * * 0' # Runs every Sunday at 7 PM UTC
+  workflow_dispatch: # Allows manual execution
+
+jobs:
+  update-packages:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.24.2'
+
+      - name: Update Go packages
+        run: go get -u ./...
+
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b update-go-packages
+          git add .
+          git commit -m "Update Go packages"
+
+      - name: Push changes
+        run: git push origin update-go-packages
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v5
+        with:
+          branch: update-go-packages
+          title: Update Go packages
+          body: |
+            This pull request updates all Go packages to their latest versions.

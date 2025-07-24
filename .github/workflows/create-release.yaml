@@ -1,0 +1,44 @@
+name: Create Release
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Get and bump version
+        id: bump_version
+        run: |
+          latest_tag=$(git describe --tags --abbrev=0)
+          echo "Latest tag: $latest_tag"
+          # Extract major, minor, and patch numbers
+          major=$(echo $latest_tag | cut -d'.' -f1 | tr -d 'v')
+          minor=$(echo $latest_tag | cut -d'.' -f2)
+          patch=$(echo $latest_tag | cut -d'.' -f3)
+          # Increment patch version
+          new_patch=$((patch + 1))
+          new_tag="v${major}.${minor}.${new_patch}"
+          echo "New tag: $new_tag"
+          echo "version=$new_tag" >> $GITHUB_ENV
+
+      - name: Create new tag
+        run: |
+          git tag ${{ env.version }}
+          git push origin ${{ env.version }}
+
+      - name: Create Release
+        uses: actions/create-release@v1
+        with:
+          tag_name: ${{ env.version }}
+          release_name: Release ${{ env.version }}
+          body: |
+            This release was automatically created after merging changes into the main branch.
+          draft: false
+          prerelease: false
