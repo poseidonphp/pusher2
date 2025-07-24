@@ -1,3 +1,4 @@
+name: Create Go Binary
 on:
   release:
     types: [created]
