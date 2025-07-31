@@ -82,7 +82,7 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           goos: ${{ matrix.goos }}
           goarch: ${{ matrix.goarch }}
-          asset_name: 'socket_rush_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz'
+          asset_name: 'socket_rush_${{ matrix.goos }}_${{ matrix.goarch }}'
           #          goversion: "https://dl.google.com/go/go1.13.1.linux-amd64.tar.gz"
           project_path: "./cmd/pusher/"
           binary_name: "socket_rush_${{ matrix.goos }}_${{ matrix.goarch }}"
