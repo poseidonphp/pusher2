@@ -37,5 +37,6 @@ jobs:
         with:
           branch: update-go-packages
           title: Update Go packages
+          base: main
           body: |
             This pull request updates all Go packages to their latest versions.
