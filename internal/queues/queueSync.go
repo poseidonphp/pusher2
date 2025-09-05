@@ -48,7 +48,7 @@ func (sd *SyncQueue) addToQueue(jobData *webhooks.QueuedJobData) {
 }
 
 func (sd *SyncQueue) monitorQueue(ctx context.Context) {
-	log.Logger().Infoln("Listening for events on local dispatcher")
+	log.Logger().Debug("Listening for events on local dispatcher")
 	for {
 		select {
 		case data := <-sd.incomingMessages:

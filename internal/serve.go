@@ -23,6 +23,10 @@ var upgrader = websocket.Upgrader{
 	WriteBufferSize: constants.MaxMessageSize,
 }
 
+// LoadWebServer initializes and returns an HTTP server configured with routes and middleware
+// for handling WebSocket connections and REST API requests.
+//
+// It does not start the server; it only sets it up, then returns it to the caller.
 func LoadWebServer(server *Server) *http.Server {
 	// Establish the Gin router for handling HTTP requests
 	if server.config.Env == constants.PRODUCTION {
@@ -76,6 +80,7 @@ func LoadWebServer(server *Server) *http.Server {
 		ServeWs(server, c.Writer, c.Request, appKey, client, version, protocol)
 	})
 
+	// Health check endpoint
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
@@ -87,7 +92,11 @@ func LoadWebServer(server *Server) *http.Server {
 	return webServer
 }
 
-// ServeWS handles websocket requests from the peer
+// ServeWs handles websocket requests from the peer
+// It upgrades the HTTP connection to a WebSocket, performs necessary validations,
+// and initializes a WebSocket instance to manage the connection.
+//
+// When it's done, it adds the socket to the server's adapter and starts listening for messages.
 func ServeWs(server *Server, w http.ResponseWriter, r *http.Request, appKey, client, version, protocolStr string) {
 	if server.Closing {
 		log.Logger().Error("Server is not accepting connections")
@@ -125,13 +134,6 @@ func ServeWs(server *Server, w http.ResponseWriter, r *http.Request, appKey, cli
 		return
 	}
 
-	// ws := server.websocketPool.Get().(*WebSocket)
-	// ws.ID = socketID
-	// ws.conn = conn
-	// ws.closed = false
-	// ws.server = server
-	// ws.app = app
-
 	ws := &WebSocket{
 		ID:   socketID,
 		conn: conn,
@@ -147,7 +149,7 @@ func ServeWs(server *Server, w http.ResponseWriter, r *http.Request, appKey, cli
 
 	socketCount := server.Adapter.GetSocketsCount(app.ID, false)
 
-	if app.MaxConnections > 0 && socketCount+1 > app.MaxConnections {
+	if app.MaxConnections > -1 && socketCount+1 > app.MaxConnections {
 		log.Logger().Infof("max connections exceeded for app: %s", app.ID)
 		closeConnectionWithError(conn, util.ErrCodeOverQuota, "maximum number of connections has been reached")
 		return

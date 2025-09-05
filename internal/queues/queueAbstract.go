@@ -87,7 +87,6 @@ func (q *AbstractQueue) Send(app *apps.App, event *pusher.WebhookEvent) {
 	} else {
 		// skip flap detection, send right to the queue
 		q.prepareQueuedMessages(app, event)
-		// q.concreteQueue.addToQueue(buildQueuedJobData(app.ID, event))
 	}
 }
 

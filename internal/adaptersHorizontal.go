@@ -37,17 +37,17 @@ func NewHorizontalAdapter(adapter HorizontalInterface) (*HorizontalAdapter, erro
 type HorizontalRequestType int
 
 const (
-	SOCKETS HorizontalRequestType = iota
-	CHANNELS
-	CHANNEL_SOCKETS
-	CHANNEL_MEMBERS
-	SOCKETS_COUNT
-	CHANNEL_MEMBERS_COUNT
-	CHANNEL_SOCKETS_COUNT
-	SOCKET_EXISTS_IN_CHANNEL
-	CHANNELS_WITH_SOCKETS_COUNT
-	TERMINATE_USER_CONNECTIONS
-	PRESENCE_CHANNELS_WITH_USERS_COUNT
+	SOCKETS                            HorizontalRequestType = 0
+	CHANNELS                           HorizontalRequestType = 1
+	CHANNEL_SOCKETS                    HorizontalRequestType = 2
+	CHANNEL_MEMBERS                    HorizontalRequestType = 3
+	SOCKETS_COUNT                      HorizontalRequestType = 4
+	CHANNEL_MEMBERS_COUNT              HorizontalRequestType = 5
+	CHANNEL_SOCKETS_COUNT              HorizontalRequestType = 6
+	SOCKET_EXISTS_IN_CHANNEL           HorizontalRequestType = 7
+	CHANNELS_WITH_SOCKETS_COUNT        HorizontalRequestType = 8
+	TERMINATE_USER_CONNECTIONS         HorizontalRequestType = 9
+	PRESENCE_CHANNELS_WITH_USERS_COUNT HorizontalRequestType = 10
 )
 
 type HorizontalRequestExtra struct {
@@ -67,9 +67,7 @@ type HorizontalRequest struct {
 	timestamp           time.Time
 	requestResolveChan  chan *HorizontalResponse // used to receive incoming responses from other nodes
 	requestResponseChan chan *HorizontalResponse // used to send the final aggregated responses to the requestor
-	// resolve     func()
-	// reject      func()
-	timeout any
+	timeout             any
 	HorizontalRequestExtra
 }
 
@@ -111,7 +109,7 @@ type horizontalPubsubBroadcastedMessage struct {
 	ExceptingIds constants.SocketID
 }
 
-// HorizontalAdapter behaves similar to an abstract class; it has methods that can be used by other structs that implment
+// HorizontalAdapter behaves similar to an abstract class; it has methods that can be used by other structs that implement
 // and will satisfy the HorizontalInterface. It also has a concreteAdapter that should store an instance of the
 // actual horizontal driver being used (ie redis). You should never directly assign the HorizontalAdapter as the
 // adapter being used.
@@ -228,6 +226,7 @@ func (ha *HorizontalAdapter) GetSocketsCount(appID constants.AppID, onlyLocal bo
 		numSub:     numberOfSubscribers,
 		totalCount: socketCount,
 	}
+
 	response := ha.sendRequest(appID, SOCKETS_COUNT, requestExtra, nil)
 	return response.TotalCount
 }
@@ -256,6 +255,7 @@ func (ha *HorizontalAdapter) GetChannels(appId constants.AppID, onlyLocal bool) 
 	if response != nil {
 		return response.Channels
 	}
+
 	return make(map[constants.ChannelName][]constants.SocketID)
 }
 
@@ -280,6 +280,7 @@ func (ha *HorizontalAdapter) GetChannelsWithSocketsCount(appID constants.AppID, 
 		numSub:                   numSub,
 		channelsWithSocketsCount: localSocketCount,
 	}
+
 	response := ha.sendRequest(appID, CHANNELS_WITH_SOCKETS_COUNT, requestExtra, nil)
 	if response != nil {
 		return response.ChannelsWithSocketsCount

@@ -2,10 +2,34 @@ package cache
 
 import (
 	"errors"
-	"github.com/stretchr/testify/assert"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
+
+func TestGetChannelCacheKey(t *testing.T) {
+	testCases := []struct {
+		name     string
+		prefix   string
+		channel  string
+		expected string
+	}{
+		{"No prefix, regular channel", "", "my-channel", "app##channel#my-channel"},
+		{"With prefix, regular channel", "myprefix", "my-channel", "app#myprefix#channel#my-channel"},
+		{"No prefix, presence channel", "", "presence-my-channel", "app##channel#presence-my-channel"},
+		{"With prefix, presence channel", "myprefix", "presence-my-channel", "app#myprefix#channel#presence-my-channel"},
+		{"No prefix, private channel", "", "private-my-channel", "app##channel#private-my-channel"},
+		{"With prefix, private channel", "myprefix", "private-my-channel", "app#myprefix#channel#private-my-channel"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := GetChannelCacheKey(tc.prefix, tc.channel)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
+}
 
 func TestLocalCache(t *testing.T) {
 	localCache := &LocalCache{}

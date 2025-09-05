@@ -55,7 +55,7 @@ func (l *LocalAdapter) AddSocket(appID constants.AppID, ws *WebSocket) error {
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
 	if _, ok := l.Namespaces[appID]; !ok {
-		log.Logger().Warn("namespace not found, creating new one")
+		// log.Logger().Warn("namespace not found, creating new one")
 		l.Namespaces[appID] = l.createBlankNamespace()
 	}
 

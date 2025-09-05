@@ -2,7 +2,6 @@ package config
 
 import (
 	"context"
-
 	"errors"
 
 	"fmt"
@@ -22,35 +21,14 @@ import (
 	"pusher/log"
 )
 
-type AppID = string
-
-type AppConfig struct {
-	AppID     AppID
-	AppKey    string
-	AppSecret string
-}
-
-type CommandLineFlags struct {
-	DotEnvPath       string
-	Port             string
-	BindAddress      string
-	ConfigJson       string
-	PreferConfigFile bool // by default env vars take priority over config file. If this is true, config params take priority over env vars
-	CacheManager     string
-	QueueManager     string
-	AdapterManager   string
-	AppManager       string
-	Env              string
-	RedisPrefix      string
-	RedisURL         string
-	RedisTLS         bool
-	RedisClusterMode string
-	LogLevel         string
-	DefaultAppConfig *apps.App
-}
+// type AppConfig struct {
+// 	AppID     constants.AppID
+// 	AppKey    string
+// 	AppSecret string
+// }
 
 type ServerConfig struct {
-	ctx                    *context.Context     `mapstructure:"-" json:"-"`
+	ctx                    *context.Context     `mapstructure:"-"`
 	Env                    string               `mapstructure:"app_env"`
 	Port                   string               `mapstructure:"port"`
 	BindAddress            string               `mapstructure:"bind_address"`
@@ -67,7 +45,12 @@ type ServerConfig struct {
 	RedisTls               bool                 `mapstructure:"redis_tls"`
 	RedisClusterMode       bool                 `mapstructure:"redis_cluster_mode"`
 	IgnoreLoggerMiddleware bool                 `mapstructure:"ignore_logger_middleware"`
+	EnableMetrics          bool                 `mapstructure:"enable_metrics"`
 	Applications           []apps.App           `mapstructure:"applications"`
+}
+
+func isTest() bool {
+	return strings.HasSuffix(os.Args[0], ".test") || os.Getenv("GO_TEST") != ""
 }
 
 func initFlags() {
@@ -87,8 +70,9 @@ func initFlags() {
 	pflag.String("redis-prefix", "pusher", "Prefix to use for Redis keys")
 	pflag.Bool("redis-tls", false, "Use TLS for Redis connection")
 	pflag.Bool("redis-cluster", false, "Use Redis cluster mode")
-	pflag.String("log-level", "info", "Log level (trace, debug, info, warn, error)")
+	pflag.String("log-level", "warn", "Log level (trace, debug, info, warn, error)")
 	pflag.Bool("ignore-logger-middleware", false, "Ignore logger middleware")
+	pflag.Bool("enable-metrics", true, "Enable metrics collection and endpoints")
 
 	// Single app config
 	pflag.String("app-id", "", "Default app id")
@@ -118,8 +102,12 @@ func initFlags() {
 	pflag.Bool("app-has-cache-miss-webhooks", false, "Default app has cache miss webhooks")
 	pflag.Bool("app-webhook-batching-enabled", false, "Default app webhook batching enabled")
 	pflag.Bool("app-webhooks-enabled", false, "Default app webhooks enabled")
+
+	// Parse the flags
 	pflag.Parse()
 
+	// Bind some flags to their snake-kebab-case equivalents in viper
+	// so that both --app-env and --app_env work
 	_ = viper.BindPFlag("app_env", pflag.Lookup("app-env"))
 	_ = viper.BindPFlag("bind_address", pflag.Lookup("bind-address"))
 	_ = viper.BindPFlag("adapter_driver", pflag.Lookup("adapter-driver"))
@@ -132,20 +120,30 @@ func initFlags() {
 	_ = viper.BindPFlag("redis_cluster", pflag.Lookup("redis-cluster"))
 	_ = viper.BindPFlag("log_level", pflag.Lookup("log-level"))
 	_ = viper.BindPFlag("ignore_logger_middleware", pflag.Lookup("ignore-logger-middleware"))
+	_ = viper.BindPFlag("enable_metrics", pflag.Lookup("enable-metrics"))
 
 }
 
-func InitializeServerConfigNew(ctx *context.Context) (*ServerConfig, error) {
+func InitializeServerConfig(_ *context.Context) (*ServerConfig, error) {
+	// Initialize Viper and pflag to read configuration from multiple sources
 	initFlags()
 
 	// 3) Figure out which .env to load (if any) and load it
-	envFile := pflag.Lookup("env-file").Value.String()
-	if envFile == "" {
-		envFile = "./.env"
-	}
-	if _, err := os.Stat(envFile); err == nil {
-		if err := godotenv.Load(envFile); err != nil {
-			return nil, fmt.Errorf("error loading .env file: %v", err)
+	if !isTest() || os.Getenv("TEST_WITH_ENV_FILE") == "true" {
+		envFile := pflag.Lookup("env-file").Value.String()
+		if envFile == "" {
+			envFile = os.Getenv("ENV_FILE")
+		}
+		if envFile == "" {
+			envFile = "./.env"
+		}
+
+		if _, err := os.Stat(envFile); err == nil {
+			if err = godotenv.Load(envFile); err != nil {
+				return nil, fmt.Errorf("error loading .env file (%s): %s", envFile, err.Error())
+			}
+		} else {
+			return nil, fmt.Errorf("error finding .env file (%s): %s", envFile, err.Error())
 		}
 	}
 
@@ -159,13 +157,15 @@ func InitializeServerConfigNew(ctx *context.Context) (*ServerConfig, error) {
 	cfgPath := ""
 	if f := pflag.Lookup("config-file").Value.String(); f != "" {
 		cfgPath = f
-	} else if f := os.Getenv("CONFIG_FILE"); f != "" {
+	} else if f = os.Getenv("CONFIG_FILE"); f != "" {
 		cfgPath = f
 	}
 	if cfgPath != "" {
 		viper.SetConfigFile(cfgPath)
 		if err := viper.ReadInConfig(); err != nil {
 			return nil, fmt.Errorf("error reading config file: %v", err)
+		} else {
+			log.Logger().Infoln("Using config file:", viper.ConfigFileUsed())
 		}
 	}
 
@@ -203,7 +203,7 @@ func InitializeServerConfigNew(ctx *context.Context) (*ServerConfig, error) {
 		return nil, fmt.Errorf("error binding flags: %v", err)
 	}
 
-	// 7) unmarshal into ServerConfig struct
+	// 7) unmarshal the viper config (cli, env, and config params) into ServerConfig struct
 	var cfg ServerConfig
 	if err := viper.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("error unmarshalling config: %v", err)
@@ -211,7 +211,7 @@ func InitializeServerConfigNew(ctx *context.Context) (*ServerConfig, error) {
 
 	// —–– post‑processing for “single‑app” mode –––
 	if len(cfg.Applications) == 0 {
-		// if any of the single flags/ENV were set, grab them:
+		// if any of the "single-app" flags/ENV were set, grab them:
 		id, key, sec := viper.GetString("app_id"), viper.GetString("app_key"), viper.GetString("app_secret")
 		activityTimeout := viper.GetInt("app_activity_timeout")
 		authorizationTimeoutInSeconds := viper.GetInt("app_authorization_timeout_seconds")
@@ -238,17 +238,19 @@ func InitializeServerConfigNew(ctx *context.Context) (*ServerConfig, error) {
 		webhookBatchingEnabled := viper.GetBool("app_webhook_batching_enabled")
 		webhooksEnabled := viper.GetBool("app_webhooks_enabled")
 
-		readTimeout := time.Duration(float64(activityTimeout)*10.0/9.0) * time.Second
+		// activityTimeoutInt := int64(math.Round((float64(activityTimeout) * 10.0) / 9.0))
+		// readTimeout := time.Duration(activityTimeoutInt) * time.Second
 		authorizationTimeout := time.Duration(authorizationTimeoutInSeconds) * time.Second
 
 		if id != "" || key != "" || sec != "" {
 			cfg.Applications = append(cfg.Applications, apps.App{
-				ID:                           id,
-				Key:                          key,
-				Secret:                       sec,
-				ActivityTimeout:              activityTimeout,
-				ReadTimeout:                  readTimeout,
+				ID:              id,
+				Key:             key,
+				Secret:          sec,
+				ActivityTimeout: activityTimeout,
+				// ReadTimeout:                  readTimeout,
 				AuthorizationTimeout:         authorizationTimeout,
+				AuthorizationTimeoutSeconds:  authorizationTimeoutInSeconds,
 				MaxConnections:               maxConnections,
 				EnableClientMessages:         enableClientMessages,
 				Enabled:                      enabled,
@@ -273,25 +275,50 @@ func InitializeServerConfigNew(ctx *context.Context) (*ServerConfig, error) {
 				WebhooksEnabled:              webhooksEnabled,
 			})
 		}
+	} else {
+		for _ = range cfg.Applications {
+			// calculate ReadTimeout from ActivityTimeout
+			// activityTimeout := cfg.Applications[i].ActivityTimeout
+			// activityTimeoutInt := int64(math.Round((float64(activityTimeout) * 10.0) / 9.0))
+			// cfg.Applications[i].ReadTimeout = time.Duration(activityTimeoutInt) * time.Second
+
+			// calculate AuthorizationTimeout from AuthorizationTimeoutInSeconds
+			// authorizationTimeoutInSeconds := viper.GetInt("app_authorization_timeout_seconds")
+			// if cfg.Applications[i].AuthorizationTimeoutSeconds > 0 {
+			// 	cfg.Applications[i].AuthorizationTimeout = time.Duration(authorizationTimeoutInSeconds) * time.Second
+			// }
+		}
 	}
 
+	if len(cfg.Applications) == 0 {
+		return nil, errors.New("no applications configured; please configure at least one application via config file, env vars, or CLI flags")
+	}
+
+	for i := range cfg.Applications {
+		// set app defaults
+		cfg.Applications[i].SetMissingDefaults()
+	}
+
+	// 8) If any of the drivers are set to redis, we will set UsingRedis to true so it can be initialized
 	if cfg.ChannelCacheDriver == "redis" || cfg.QueueDriver == "redis" || cfg.AdapterDriver == "redis" {
 		cfg.UsingRedis = true
 	} else {
 		cfg.UsingRedis = false
 	}
 
+	// 9) If UsingRedis is true, initialize the Redis client
+	// and assign it to RedisInstance
 	if cfg.UsingRedis {
 		log.Logger().Infoln("Initializing Redis client")
 		client := &clients.RedisClient{Prefix: cfg.RedisPrefix}
 		err := client.InitRedis(cfg.RedisUrl, cfg.RedisClusterMode, cfg.RedisTls)
 		if err != nil {
-			return nil, errors.New(fmt.Sprintf("Error initializing Redis client: %v", err.Error()))
+			return nil, errors.New(fmt.Sprintf("Error initializing Redis client: %s", err.Error()))
 		}
 		cfg.RedisInstance = client
 	}
 
-	// Set up the logger
+	// 10) Set up the logger
 	lvl, _ := logrus.ParseLevel(cfg.LogLevel)
 	log.Logger().SetLevel(lvl)
 	if cfg.Env != constants.PRODUCTION {
@@ -299,60 +326,4 @@ func InitializeServerConfigNew(ctx *context.Context) (*ServerConfig, error) {
 	}
 
 	return &cfg, nil
-}
-
-func (s *ServerConfig) InitializeBackendServices() error {
-	// // Initialize the webhook manager
-	// err := s.InitializeWebhookManager()
-	// if err != nil {
-	// 	return errors.New(fmt.Sprintf("failed to initialize webhook manager: %v", err.Error()))
-	// }
-	//
-	// // Initialize the dispatcher
-	// if s.WebhookEnabled {
-	// 	err = s.InitializeDispatcher()
-	// 	if err != nil {
-	// 		return errors.New(fmt.Sprintf("failed to initialize dispatcher: %v", err.Error()))
-	// 	}
-	// }
-	//
-	// // Initialize the pubsub manager
-	// err = s.InitializePubSubManager()
-	// if err != nil {
-	// 	return errors.New(fmt.Sprintf("failed to initialize pubsub manager: %v", err.Error()))
-	// }
-
-	// // Initialize the storage manager
-	// err = s.InitializeStorageManager()
-	// if err != nil {
-	// 	return errors.New(fmt.Sprintf("failed to initialize storage manager: %v", err.Error()))
-	// }
-	// s.StorageManager.Start()
-
-	// Initialize the channel cache manager
-	err := s.InitializeChannelCacheManager()
-	if err != nil {
-		return errors.New(fmt.Sprintf("failed to initialize channel cache manager: %v", err.Error()))
-	}
-	return nil
-}
-
-func (s *ServerConfig) InitializeChannelCacheManager() error {
-	switch s.ChannelCacheDriver {
-	case "local":
-		s.ChannelCacheManager = &cache.LocalCache{}
-	case "redis":
-		s.ChannelCacheManager = &cache.RedisCache{
-			Client: s.RedisInstance.Client,
-			Prefix: s.RedisInstance.Prefix,
-		}
-	default:
-		return errors.New("invalid channel cache driver: " + s.ChannelCacheDriver)
-	}
-
-	err := s.ChannelCacheManager.Init()
-	if err != nil {
-		return errors.New(fmt.Sprintf("failed to initialize channel cache manager: %v", err.Error()))
-	}
-	return nil
 }

@@ -7,5 +7,5 @@ import (
 
 type RateLimiterInterface interface {
 	Init() error
-	ConsumeBackendEventPoints(points number, app *apps.App, ws *internal.WebSocket)
+	ConsumeBackendEventPoints(points int, app *apps.App, ws *internal.WebSocket)
 }

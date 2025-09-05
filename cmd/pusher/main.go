@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 
 	"net/http"
@@ -35,36 +34,36 @@ func init() {
 }
 
 func main() {
-	// Bootstrap the application by loading environment variables
+
+	// Bootstrap the application by reading command line flags, environment variables, and config files
+	// to build the server configuration.
 	ctx, cancel := context.WithCancel(context.Background())
-	serverConfig, err := config.InitializeServerConfigNew(&ctx)
+	serverConfig, err := config.InitializeServerConfig(&ctx)
 	if err != nil {
 		log.Fatalf("failed to load config: %v", err)
 	}
-	fmt.Printf("Loaded config: %+v\n", serverConfig)
 
-	// commandLineFlags := config.ParseCommandLineFlags()
-	//
-	// serverConfig, err := config.InitializeServerConfig(&ctx, commandLineFlags)
-	// if err != nil {
-	// 	logger.Logger().Fatal(err)
-	// }
-
-	var wg sync.WaitGroup
+	logger.Logger().Debugf("Loaded config: %+v\n", serverConfig)
 
 	logger.Logger().Infoln("Booting pusher server")
 
-	// server, err := internal.NewServer(ctx, serverConfig, commandLineFlags)
-	server, err := internal.NewServer(ctx, serverConfig)
+	// Create the server instance
+	var server *internal.Server
+	server, err = internal.NewServer(ctx, serverConfig)
 	if err != nil {
 		logger.Logger().Fatal("Failed to create server: " + err.Error())
 	}
 
+	// Ensure we handle panics gracefully when the main function exits
 	defer handlePanic(server)
 
+	// Load and start the web server to handle incoming HTTP requests
 	webServer := internal.LoadWebServer(server)
 
-	// Run the web server in a goroutine
+	// Run the web server in a goroutine with a wait group to manage its lifecycle
+	// and ensure it can be gracefully shut down on interrupt signals.
+	// The web server will listen on the configured port and bind address.
+	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -73,9 +72,12 @@ func main() {
 		}
 	}()
 
+	// infinitely wait for interrupt signals to gracefully shut down the server and clean up resources.
 	handleInterrupt(server, &wg, webServer, cancel)
 }
 
+// handlePanic recovers from panics, logs the error, attempts to close all local sockets,
+// and exits the application.
 func handlePanic(server *internal.Server) {
 	if r := recover(); r != nil {
 		logger.Logger().Error("Recovered from panic", r)
@@ -85,6 +87,7 @@ func handlePanic(server *internal.Server) {
 	}
 }
 
+// handleInterrupt listens for OS interrupt signals (like Ctrl+C) and initiates a graceful shutdown
 func handleInterrupt(server *internal.Server, wg *sync.WaitGroup, webServer *http.Server, cancel context.CancelFunc) {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
