@@ -77,7 +77,6 @@ func (fd *FlapDetector) CheckForFlapping(app *apps.App, key string, event EventT
 			log.Logger().Tracef("Event %s cancelled for key %s", event, key)
 			return
 		default:
-			// prepareQueuedMessages(app, webhookEvent) // prepare the messages
 			dispatchFn(app, webhookEvent) // send to dispatcher
 		}
 		fd.mu.Lock()
