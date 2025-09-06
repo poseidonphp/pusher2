@@ -227,7 +227,7 @@ func (q *AbstractQueue) SendChannelOccupied(app *apps.App, channel constants.Cha
 }
 
 func (q *AbstractQueue) SendCacheMissed(app *apps.App, channel constants.ChannelName) {
-	if !app.HasChannelOccupiedWebhooks {
+	if !app.HasCacheMissWebhooks {
 		return
 	}
 

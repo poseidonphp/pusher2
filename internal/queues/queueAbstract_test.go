@@ -62,77 +62,6 @@ func (m *MockQueueInterface) Init() error {
 	return m.initError
 }
 
-// func (m *MockQueueInterface) Send(app *apps.App, webhook *pusher.WebhookEvent) {
-// 	m.mu.Lock()
-// 	defer m.mu.Unlock()
-// 	m.sendCalls = append(m.sendCalls, struct {
-// 		app     *apps.App
-// 		webhook *pusher.WebhookEvent
-// 	}{app, webhook})
-// }
-
-// func (m *MockQueueInterface) SendClientEvent(app *apps.App, channel constants.ChannelName, event string, data string, socketID constants.SocketID, userID constants.UserID) {
-// func (m *MockQueueInterface) SentClientEvent(data *webhooks.QueuedJobData) {
-// 	m.mu.Lock()
-// 	defer m.mu.Unlock()
-// 	m.sendClientCalls = append(m.sendClientCalls, data)
-// 	// m.sendClientEventCalls = append(m.sendClientEventCalls, struct {
-// 	// 	app      *apps.App
-// 	// 	channel  constants.ChannelName
-// 	// 	event    string
-// 	// 	data     string
-// 	// 	socketID constants.SocketID
-// 	// 	userID   constants.UserID
-// 	// }{app, channel, event, data, socketID, userID})
-// }
-
-// func (m *MockQueueInterface) SendMemberAdded(app *apps.App, channel constants.ChannelName, userID constants.UserID) {
-// 	m.mu.Lock()
-// 	defer m.mu.Unlock()
-// 	m.sendMemberAddedCalls = append(m.sendMemberAddedCalls, struct {
-// 		app     *apps.App
-// 		channel constants.ChannelName
-// 		userID  constants.UserID
-// 	}{app, channel, userID})
-// }
-
-// func (m *MockQueueInterface) SendMemberRemoved(app *apps.App, channel constants.ChannelName, userID constants.UserID) {
-// 	m.mu.Lock()
-// 	defer m.mu.Unlock()
-// 	m.sendMemberRemovedCalls = append(m.sendMemberRemovedCalls, struct {
-// 		app     *apps.App
-// 		channel constants.ChannelName
-// 		userID  constants.UserID
-// 	}{app, channel, userID})
-// }
-//
-// func (m *MockQueueInterface) SendChannelVacated(app *apps.App, channel constants.ChannelName) {
-// 	m.mu.Lock()
-// 	defer m.mu.Unlock()
-// 	m.sendChannelVacatedCalls = append(m.sendChannelVacatedCalls, struct {
-// 		app     *apps.App
-// 		channel constants.ChannelName
-// 	}{app, channel})
-// }
-//
-// func (m *MockQueueInterface) SendChannelOccupied(app *apps.App, channel constants.ChannelName) {
-// 	m.mu.Lock()
-// 	defer m.mu.Unlock()
-// 	m.sendChannelOccupiedCalls = append(m.sendChannelOccupiedCalls, struct {
-// 		app     *apps.App
-// 		channel constants.ChannelName
-// 	}{app, channel})
-// }
-//
-// func (m *MockQueueInterface) SendCacheMissed(app *apps.App, channel constants.ChannelName) {
-// 	m.mu.Lock()
-// 	defer m.mu.Unlock()
-// 	m.sendCacheMissedCalls = append(m.sendCacheMissedCalls, struct {
-// 		app     *apps.App
-// 		channel constants.ChannelName
-// 	}{app, channel})
-// }
-
 // Helper methods for assertions
 func (m *MockQueueInterface) GetAddToQueueCalls() []*webhooks.QueuedJobData {
 	m.mu.Lock()
@@ -176,6 +105,7 @@ func createTestAppWithWebhooks() *apps.App {
 		HasMemberRemovedWebhooks:   true,
 		HasChannelVacatedWebhooks:  true,
 		HasChannelOccupiedWebhooks: true,
+		HasCacheMissWebhooks:       true,
 		Webhooks: []constants.Webhook{
 			{
 				URL: "https://example.com/webhook1",
@@ -450,297 +380,134 @@ func TestAbstractQueue_prepareQueuedMessages(t *testing.T) {
 	})
 }
 
-func TestAbstractQueue_SendClientEvent(t *testing.T) {
-	t.Run("WebhooksEnabled", func(t *testing.T) {
-		mockQueue := &MockQueueInterface{}
+func TestAbstractQueue_SendEvents(t *testing.T) {
+	type testCase struct {
+		Name                string
+		SendCall            string
+		ValidationCall      string
+		ExpectedLength      int
+		WebhooksEnabledName string
+	}
+	tests := []testCase{
+		{"ClientEvent", "SendClientEvent", "GetSendClientEventCalls", 1, "HasClientEventWebhooks"},
+		{"MemberAdded", "SendMemberAdded", "GetSendMemberAddedCalls", 1, "HasMemberAddedWebhooks"},
+		{"MemberRemoved", "SendMemberRemoved", "GetSendMemberRemovedCalls", 1, "HasMemberRemovedWebhooks"},
+		{"ChannelVacated", "SendChannelVacated", "GetSendChannelVacatedCalls", 1, "HasChannelVacatedWebhooks"},
+		{"ChannelOccupied", "SendChannelOccupied", "GetSendChannelOccupiedCalls", 1, "HasChannelOccupiedWebhooks"},
+		{"CacheMissed", "SendCacheMissed", "GetSendCacheMissedCalls", 1, "HasCacheMissWebhooks"},
+	}
 
-		ctx := context.Background()
-		queue, err := NewAbstractQueue(ctx, mockQueue, &webhooks.WebhookSender{}, true, 100*time.Millisecond)
-		assert.NoError(t, err)
+	channel := constants.ChannelName("test-channel")
+	userID := constants.UserID("user-456")
+	event := "test-event"
+	data := "test-data"
+	socketID := constants.SocketID("socket-123")
+	ctx := context.Background()
 
-		app := createTestAppWithWebhooks()
-		channel := constants.ChannelName("test-channel")
-		event := "test-event"
-		data := "test-data"
-		socketID := constants.SocketID("socket-123")
-		userID := constants.UserID("user-456")
-
-		queue.SendClientEvent(app, channel, event, data, socketID, userID)
-
-		time.Sleep(150 * time.Millisecond) // wait for flap detection
-
-		// Verify Send was called
-		calls := mockQueue.GetSendClientEventCalls()
-		assert.Len(t, calls, 1)
-		if len(calls) > 0 {
-			assert.Equal(t, app.ID, calls[0].AppID)
-			assert.Equal(t, channel, calls[0].Payload.Channel)
-			assert.Equal(t, event, calls[0].Payload.Name)
+	sendCall := func(queue *AbstractQueue, funcName string, app *apps.App, channel constants.ChannelName, userID constants.UserID) {
+		switch funcName {
+		case "SendMemberAdded":
+			queue.SendMemberAdded(app, channel, userID)
+		case "SendMemberRemoved":
+			queue.SendMemberRemoved(app, channel, userID)
+		case "SendChannelVacated":
+			queue.SendChannelVacated(app, channel)
+		case "SendChannelOccupied":
+			queue.SendChannelOccupied(app, channel)
+		case "SendCacheMissed":
+			queue.SendCacheMissed(app, channel)
+		case "SendClientEvent":
+			queue.SendClientEvent(app, channel, event, data, socketID, userID)
+		default:
+			t.Errorf("Unknown SendCall: %s", funcName)
+			t.Fail()
 		}
-	})
+	}
 
-	t.Run("WebhooksDisabled", func(t *testing.T) {
-		mockQueue := &MockQueueInterface{}
-
-		ctx := context.Background()
-		queue, err := NewAbstractQueue(ctx, mockQueue, &webhooks.WebhookSender{}, true, 3*time.Second)
-		assert.NoError(t, err)
-
-		app := createTestAppWithWebhooks()
-		app.HasClientEventWebhooks = false
-
-		channel := constants.ChannelName("test-channel")
-		event := "test-event"
-		data := "test-data"
-		socketID := constants.SocketID("socket-123")
-		userID := constants.UserID("user-456")
-
-		// Should not call Send when webhooks are disabled
-		queue.SendClientEvent(app, channel, event, data, socketID, userID)
-
-		// Verify no calls were made
-		calls := mockQueue.GetAddToQueueCalls()
-		assert.Empty(t, calls)
-	})
-}
-
-func TestAbstractQueue_SendMemberAdded(t *testing.T) {
-	t.Run("WebhooksEnabled", func(t *testing.T) {
-		mockQueue := &MockQueueInterface{}
-
-		ctx := context.Background()
-		queue, err := NewAbstractQueue(ctx, mockQueue, &webhooks.WebhookSender{}, true, 100*time.Millisecond)
-		assert.NoError(t, err)
-
-		app := createTestAppWithWebhooks()
-		channel := constants.ChannelName("test-channel")
-		userID := constants.UserID("user-456")
-
-		queue.SendMemberAdded(app, channel, userID)
-
-		time.Sleep(150 * time.Millisecond) // wait for flap detection
-
-		// Verify Send was called
-		calls := mockQueue.GetSendMemberAddedCalls()
-		assert.Len(t, calls, 1)
-		if len(calls) > 0 {
-			assert.Equal(t, channel, calls[0].Payload.Channel)
-			assert.Equal(t, userID, calls[0].Payload.UserID)
+	verifyCall := func(mockQueue *MockQueueInterface, funcName string) []*webhooks.QueuedJobData {
+		var calls []*webhooks.QueuedJobData
+		switch funcName {
+		case "GetSendMemberAddedCalls":
+			calls = mockQueue.GetSendMemberAddedCalls()
+		case "GetSendMemberRemovedCalls":
+			calls = mockQueue.GetSendMemberRemovedCalls()
+		case "GetSendChannelVacatedCalls":
+			calls = mockQueue.GetSendChannelVacatedCalls()
+		case "GetSendChannelOccupiedCalls":
+			calls = mockQueue.GetSendChannelOccupiedCalls()
+		case "GetSendCacheMissedCalls":
+			calls = mockQueue.GetSendCacheMissedCalls()
+		case "GetSendClientEventCalls":
+			calls = mockQueue.GetSendClientEventCalls()
+		default:
+			t.Errorf("Unknown ValidationCall: %s", funcName)
+			t.Fail()
 		}
-	})
+		return calls
+	}
 
-	t.Run("WebhooksDisabled", func(t *testing.T) {
-		mockQueue := &MockQueueInterface{}
-
-		ctx := context.Background()
-		queue, err := NewAbstractQueue(ctx, mockQueue, &webhooks.WebhookSender{}, true, 100*time.Millisecond)
-		assert.NoError(t, err)
-
-		app := createTestAppWithWebhooks()
-		app.HasMemberAddedWebhooks = false
-
-		channel := constants.ChannelName("test-channel")
-		userID := constants.UserID("user-456")
-
-		// Should not call Send when webhooks are disabled
-		queue.SendMemberAdded(app, channel, userID)
-
-		time.Sleep(150 * time.Millisecond) // wait for flap detection
-
-		// Verify no calls were made
-		calls := mockQueue.GetSendMemberAddedCalls()
-		assert.Empty(t, calls)
-	})
-}
-
-func TestAbstractQueue_SendMemberRemoved(t *testing.T) {
-	t.Run("WebhooksEnabled", func(t *testing.T) {
-		mockQueue := &MockQueueInterface{}
-
-		ctx := context.Background()
-		queue, err := NewAbstractQueue(ctx, mockQueue, &webhooks.WebhookSender{}, true, 100*time.Millisecond) // no flap detection for this test
-		assert.NoError(t, err)
-
-		app := createTestAppWithWebhooks()
-		channel := constants.ChannelName("test-channel")
-		userID := constants.UserID("user-456")
-
-		queue.SendMemberRemoved(app, channel, userID)
-
-		time.Sleep(150 * time.Millisecond) // wait for flap detection
-
-		// Verify Send was called
-		calls := mockQueue.GetSendMemberRemovedCalls()
-		assert.Len(t, calls, 1)
-		if len(calls) > 0 {
-			assert.Equal(t, channel, calls[0].Payload.Channel)
-			assert.Equal(t, userID, calls[0].Payload.UserID)
+	setAppWebhookToFalse := func(app *apps.App, webhookField string) {
+		switch webhookField {
+		case "HasMemberAddedWebhooks":
+			app.HasMemberAddedWebhooks = false
+		case "HasMemberRemovedWebhooks":
+			app.HasMemberRemovedWebhooks = false
+		case "HasChannelVacatedWebhooks":
+			app.HasChannelVacatedWebhooks = false
+		case "HasChannelOccupiedWebhooks":
+			app.HasChannelOccupiedWebhooks = false
+		case "HasCacheMissWebhooks":
+			app.HasCacheMissWebhooks = false
+		case "HasClientEventWebhooks":
+			app.HasClientEventWebhooks = false
+		default:
+			t.Errorf("Unknown WebhooksEnabledName: %s", webhookField)
+			t.Fail()
 		}
-	})
+	}
 
-	t.Run("WebhooksDisabled", func(t *testing.T) {
-		mockQueue := &MockQueueInterface{}
+	for _, tc := range tests {
+		// need to test with both webhooks enabled and disabled
+		t.Run(fmt.Sprintf("%s_WebhooksEnabled", tc.Name), func(t *testing.T) {
+			mockQueue := &MockQueueInterface{}
 
-		ctx := context.Background()
-		queue, err := NewAbstractQueue(ctx, mockQueue, &webhooks.WebhookSender{}, false, 100*time.Millisecond)
-		assert.NoError(t, err)
+			queue, err := NewAbstractQueue(ctx, mockQueue, &webhooks.WebhookSender{}, true, 100*time.Millisecond)
+			assert.NoError(t, err)
 
-		app := createTestAppWithWebhooks()
-		app.HasMemberRemovedWebhooks = false
+			app := createTestAppWithWebhooks()
 
-		channel := constants.ChannelName("test-channel")
-		userID := constants.UserID("user-456")
+			sendCall(queue, tc.SendCall, app, channel, userID)
 
-		// Should not call Send when webhooks are disabled
-		queue.SendMemberRemoved(app, channel, userID)
+			time.Sleep(150 * time.Millisecond) // wait for flap detection
 
-		time.Sleep(150 * time.Millisecond) // wait for flap detection
+			calls := verifyCall(mockQueue, tc.ValidationCall)
+			assert.Len(t, calls, tc.ExpectedLength)
+			if len(calls) > 0 {
+				assert.Equal(t, channel, calls[0].Payload.Channel)
+				if tc.Name == "MemberAdded" || tc.Name == "MemberRemoved" {
+					assert.Equal(t, userID, calls[0].Payload.UserID)
+				}
+				assert.Equal(t, app.ID, calls[0].AppID)
+			}
+		})
 
-		// Verify no calls were made
-		calls := mockQueue.GetSendMemberRemovedCalls()
-		assert.Empty(t, calls)
-	})
-}
+		t.Run(fmt.Sprintf("%s_WebhooksDisabled", tc.Name), func(t *testing.T) {
+			mockQueue := &MockQueueInterface{}
 
-func TestAbstractQueue_SendChannelVacated(t *testing.T) {
-	t.Run("WebhooksEnabled", func(t *testing.T) {
-		mockQueue := &MockQueueInterface{}
+			queue, err := NewAbstractQueue(ctx, mockQueue, &webhooks.WebhookSender{}, true, 100*time.Millisecond)
+			assert.NoError(t, err)
 
-		ctx := context.Background()
-		queue, err := NewAbstractQueue(ctx, mockQueue, &webhooks.WebhookSender{}, true, 100*time.Millisecond)
-		assert.NoError(t, err)
+			app := createTestAppWithWebhooks()
+			setAppWebhookToFalse(app, tc.WebhooksEnabledName)
 
-		app := createTestAppWithWebhooks()
-		channel := constants.ChannelName("test-channel")
+			sendCall(queue, tc.SendCall, app, channel, userID)
 
-		queue.SendChannelVacated(app, channel)
+			time.Sleep(150 * time.Millisecond) // wait for flap detection
 
-		time.Sleep(150 * time.Millisecond) // wait for flap detection
-
-		// Verify Send was called
-		calls := mockQueue.GetSendChannelVacatedCalls()
-		if len(calls) > 0 {
-			assert.Len(t, calls, 1)
-			assert.Equal(t, channel, calls[0].Payload.Channel)
-			assert.Equal(t, app.ID, calls[0].AppID)
-		}
-	})
-
-	t.Run("WebhooksDisabled", func(t *testing.T) {
-		mockQueue := &MockQueueInterface{}
-
-		ctx := context.Background()
-		queue, err := NewAbstractQueue(ctx, mockQueue, &webhooks.WebhookSender{}, true, 100*time.Millisecond)
-		assert.NoError(t, err)
-
-		app := createTestAppWithWebhooks()
-		app.HasChannelVacatedWebhooks = false
-
-		channel := constants.ChannelName("test-channel")
-
-		// Should not call Send when webhooks are disabled
-		queue.SendChannelVacated(app, channel)
-
-		time.Sleep(150 * time.Millisecond) // wait for flap detection
-
-		// Verify no calls were made
-		calls := mockQueue.GetSendChannelVacatedCalls()
-		assert.Empty(t, calls)
-	})
-}
-
-func TestAbstractQueue_SendChannelOccupied(t *testing.T) {
-	t.Run("WebhooksEnabled", func(t *testing.T) {
-		mockQueue := &MockQueueInterface{}
-
-		ctx := context.Background()
-		queue, err := NewAbstractQueue(ctx, mockQueue, &webhooks.WebhookSender{}, true, 100*time.Millisecond)
-		assert.NoError(t, err)
-
-		app := createTestAppWithWebhooks()
-		channel := constants.ChannelName("test-channel")
-
-		queue.SendChannelOccupied(app, channel)
-
-		time.Sleep(150 * time.Millisecond) // wait for flap detection
-
-		// Verify Send was called
-		calls := mockQueue.GetSendChannelOccupiedCalls()
-		assert.Len(t, calls, 1)
-		if len(calls) > 0 {
-			assert.Equal(t, app.ID, calls[0].AppID)
-			assert.Equal(t, channel, calls[0].Payload.Channel)
-		}
-	})
-
-	t.Run("WebhooksDisabled", func(t *testing.T) {
-		mockQueue := &MockQueueInterface{}
-
-		ctx := context.Background()
-		queue, err := NewAbstractQueue(ctx, mockQueue, &webhooks.WebhookSender{}, true, 100*time.Millisecond)
-		assert.NoError(t, err)
-
-		app := createTestAppWithWebhooks()
-		app.HasChannelOccupiedWebhooks = false
-
-		channel := constants.ChannelName("test-channel")
-
-		// Should not call Send when webhooks are disabled
-		queue.SendChannelOccupied(app, channel)
-
-		time.Sleep(150 * time.Millisecond) // wait for flap detection
-
-		// Verify no calls were made
-		calls := mockQueue.GetSendChannelOccupiedCalls()
-		assert.Empty(t, calls)
-	})
-}
-
-func TestAbstractQueue_SendCacheMissed(t *testing.T) {
-	t.Run("WebhooksEnabled", func(t *testing.T) {
-		mockQueue := &MockQueueInterface{}
-
-		ctx := context.Background()
-		queue, err := NewAbstractQueue(ctx, mockQueue, &webhooks.WebhookSender{}, true, 100*time.Millisecond)
-		assert.NoError(t, err)
-
-		app := createTestAppWithWebhooks()
-		channel := constants.ChannelName("test-channel")
-
-		queue.SendCacheMissed(app, channel)
-
-		time.Sleep(150 * time.Millisecond) // wait for flap detection
-
-		// Verify Send was called
-		calls := mockQueue.GetSendCacheMissedCalls()
-		assert.Len(t, calls, 1)
-		if len(calls) > 0 {
-			assert.Equal(t, app.ID, calls[0].AppID)
-			assert.Equal(t, channel, calls[0].Payload.Channel)
-		}
-	})
-
-	t.Run("WebhooksDisabled", func(t *testing.T) {
-		mockQueue := &MockQueueInterface{}
-
-		ctx := context.Background()
-		queue, err := NewAbstractQueue(ctx, mockQueue, &webhooks.WebhookSender{}, true, 100*time.Millisecond)
-		assert.NoError(t, err)
-
-		app := createTestAppWithWebhooks()
-		app.HasChannelOccupiedWebhooks = false // Note: This seems to be a bug in the original code
-
-		channel := constants.ChannelName("test-channel")
-
-		// Should not call Send when webhooks are disabled
-		queue.SendCacheMissed(app, channel)
-
-		time.Sleep(150 * time.Millisecond) // wait for flap detection
-
-		// Verify no calls were made
-		calls := mockQueue.GetSendCacheMissedCalls()
-		assert.Empty(t, calls)
-	})
+			calls := verifyCall(mockQueue, tc.ValidationCall)
+			assert.Empty(t, calls)
+		})
+	}
 }
 
 func TestAbstractQueue_FlapDetection(t *testing.T) {
