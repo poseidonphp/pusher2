@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"time"
 
+	"pusher/internal/constants"
+	"pusher/internal/metrics"
+	"pusher/log"
+
 	"github.com/google/uuid"
 	pusherClient "github.com/pusher/pusher-http-go/v5"
-	"pusher/internal/constants"
-	"pusher/log"
 )
 
 type HorizontalInterface interface {
@@ -16,7 +18,7 @@ type HorizontalInterface interface {
 	getNumSub() (int64, error)
 }
 
-func NewHorizontalAdapter(adapter HorizontalInterface) (*HorizontalAdapter, error) {
+func NewHorizontalAdapter(adapter HorizontalInterface, metricsManager metrics.MetricsInterface) (*HorizontalAdapter, error) {
 	ha := &HorizontalAdapter{
 		concreteAdapter: adapter,
 		requestTimeout:  5,
@@ -25,6 +27,7 @@ func NewHorizontalAdapter(adapter HorizontalInterface) (*HorizontalAdapter, erro
 		requests:        make(map[string]*HorizontalRequest),
 		channel:         "horizontal-adapter",
 		uuid:            uuid.NewString(),
+		metricsManager:  metricsManager,
 	}
 	err := ha.Init() // calls the init on the local adapter
 	if err != nil {
@@ -65,6 +68,7 @@ type HorizontalRequest struct {
 	appID               constants.AppID
 	requestType         HorizontalRequestType
 	timestamp           time.Time
+	startTime           time.Time                // Used for metrics timing
 	requestResolveChan  chan *HorizontalResponse // used to receive incoming responses from other nodes
 	requestResponseChan chan *HorizontalResponse // used to send the final aggregated responses to the requestor
 	timeout             any
@@ -123,6 +127,7 @@ type HorizontalAdapter struct {
 	uuid            string
 	// resolvers       map[HorizontalRequestType]horizontalResolver
 	concreteAdapter HorizontalInterface
+	metricsManager  metrics.MetricsInterface
 }
 
 type AdapterMessageToSend struct {
@@ -651,6 +656,8 @@ func (ha *HorizontalAdapter) onResponse(channel string, msg string) {
 	ha.mutex.Lock()
 	if request, hasRequest := ha.requests[response.RequestID]; hasRequest {
 		ha.mutex.Unlock()
+		// Mark horizontal adapter request received in metrics
+		ha.metricsManager.MarkHorizontalAdapterRequestReceived(request.appID)
 		// process the response
 		log.Logger().Trace("Processing response for request ID: ", response.RequestID)
 
@@ -679,6 +686,7 @@ func (ha *HorizontalAdapter) sendRequest(appId constants.AppID, requestType Hori
 		appID:               appId,
 		requestType:         requestType,
 		timestamp:           time.Now(),
+		startTime:           time.Now(),
 		requestResolveChan:  make(chan *HorizontalResponse),
 		requestResponseChan: make(chan *HorizontalResponse),
 	}
@@ -723,7 +731,8 @@ func (ha *HorizontalAdapter) sendRequest(appId constants.AppID, requestType Hori
 		body.Opts = requestOptions.Opts
 	}
 	ha.concreteAdapter.broadcastToChannel(ha.requestChannel, string(body.ToJson()))
-	// todo metrics markHorizontalAdapterRequestSent
+	// Mark horizontal adapter request sent in metrics
+	ha.metricsManager.MarkHorizontalAdapterRequestSent(appId)
 
 	// monitor the requestResolveChan and watch for an incoming message HorizontalResponse
 	// if the message is not received within the timeout, return an error
@@ -731,6 +740,10 @@ func (ha *HorizontalAdapter) sendRequest(appId constants.AppID, requestType Hori
 	select {
 	case response := <-newRequest.requestResponseChan:
 		log.Logger().Tracef("Received final response for request ID: %s", requestID)
+		// Mark horizontal adapter resolve time and resolved promises in metrics
+		resolveTime := time.Since(newRequest.startTime).Nanoseconds()
+		ha.metricsManager.TrackHorizontalAdapterResolveTime(appId, resolveTime)
+		ha.metricsManager.TrackHorizontalAdapterResolvedPromises(appId, true)
 		close(newRequest.requestResponseChan)
 		newRequest.requestResponseChan = nil
 		ha.mutex.Lock()
@@ -768,6 +781,8 @@ func (ha *HorizontalAdapter) waitForResponse(request *HorizontalRequest) {
 		case <-time.After(time.Duration(ha.requestTimeout) * time.Second):
 			// timeout reached, close the channel and return the response
 			log.Logger().Tracef("Timeout reached for request ID: %s", request.requestID)
+			// Mark horizontal adapter failed promise in metrics
+			ha.metricsManager.TrackHorizontalAdapterResolvedPromises(request.appID, false)
 			request.requestResponseChan <- finalResponse
 			return
 		case response := <-request.requestResolveChan:

@@ -45,7 +45,8 @@ type ServerConfig struct {
 	RedisTls               bool                 `mapstructure:"redis_tls"`
 	RedisClusterMode       bool                 `mapstructure:"redis_cluster_mode"`
 	IgnoreLoggerMiddleware bool                 `mapstructure:"ignore_logger_middleware"`
-	EnableMetrics          bool                 `mapstructure:"enable_metrics"`
+	MetricsEnabled         bool                 `mapstructure:"metrics_enabled"`
+	MetricsPort            string               `mapstructure:"metrics_port"`
 	Applications           []apps.App           `mapstructure:"applications"`
 }
 
@@ -72,7 +73,8 @@ func initFlags() {
 	pflag.Bool("redis-cluster", false, "Use Redis cluster mode")
 	pflag.String("log-level", "warn", "Log level (trace, debug, info, warn, error)")
 	pflag.Bool("ignore-logger-middleware", false, "Ignore logger middleware")
-	pflag.Bool("enable-metrics", true, "Enable metrics collection and endpoints")
+	pflag.Bool("metrics-enabled", true, "Enable metrics collection and endpoints")
+	pflag.Int("metrics-port", 6001, "Port on which to run the metrics server")
 
 	// Single app config
 	pflag.String("app-id", "", "Default app id")
@@ -120,7 +122,8 @@ func initFlags() {
 	_ = viper.BindPFlag("redis_cluster", pflag.Lookup("redis-cluster"))
 	_ = viper.BindPFlag("log_level", pflag.Lookup("log-level"))
 	_ = viper.BindPFlag("ignore_logger_middleware", pflag.Lookup("ignore-logger-middleware"))
-	_ = viper.BindPFlag("enable_metrics", pflag.Lookup("enable-metrics"))
+	_ = viper.BindPFlag("metrics_enabled", pflag.Lookup("metrics-enabled"))
+	_ = viper.BindPFlag("metrics_port", pflag.Lookup("metrics-port"))
 
 }
 
@@ -274,19 +277,6 @@ func InitializeServerConfig(_ *context.Context) (*ServerConfig, error) {
 				WebhookBatchingEnabled:       webhookBatchingEnabled,
 				WebhooksEnabled:              webhooksEnabled,
 			})
-		}
-	} else {
-		for _ = range cfg.Applications {
-			// calculate ReadTimeout from ActivityTimeout
-			// activityTimeout := cfg.Applications[i].ActivityTimeout
-			// activityTimeoutInt := int64(math.Round((float64(activityTimeout) * 10.0) / 9.0))
-			// cfg.Applications[i].ReadTimeout = time.Duration(activityTimeoutInt) * time.Second
-
-			// calculate AuthorizationTimeout from AuthorizationTimeoutInSeconds
-			// authorizationTimeoutInSeconds := viper.GetInt("app_authorization_timeout_seconds")
-			// if cfg.Applications[i].AuthorizationTimeoutSeconds > 0 {
-			// 	cfg.Applications[i].AuthorizationTimeout = time.Duration(authorizationTimeoutInSeconds) * time.Second
-			// }
 		}
 	}
 

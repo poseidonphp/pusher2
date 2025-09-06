@@ -15,15 +15,16 @@ import (
 )
 
 type Server struct {
-	config         *config.ServerConfig
-	ctx            context.Context
-	AppManager     apps.AppManagerInterface
-	Adapter        AdapterInterface
-	MetricsManager metrics.MetricsInterface
-	CacheManager   cache.CacheContract
-	QueueManager   queues.QueueInterface
-	WebhookSender  *webhooks.WebhookSender
-	Closing        bool
+	config            *config.ServerConfig
+	ctx               context.Context
+	AppManager        apps.AppManagerInterface
+	Adapter           AdapterInterface
+	MetricsManager    metrics.MetricsInterface
+	PrometheusMetrics *metrics.PrometheusMetrics
+	CacheManager      cache.CacheContract
+	QueueManager      queues.QueueInterface
+	WebhookSender     *webhooks.WebhookSender
+	Closing           bool
 	// websocketPool  sync.Pool
 }
 
@@ -35,8 +36,23 @@ type Server struct {
 // It initializes various components such as the adapter, app manager, metrics manager,
 // cache manager, and queue manager based on the provided configuration.
 func NewServer(ctx context.Context, conf *config.ServerConfig) (*Server, error) {
+	s := &Server{
+		ctx:    ctx,
+		config: conf,
+	}
 
-	adapter, err := loadAdapter(ctx, conf)
+	// Initialize metrics manager first
+	var metricsManager metrics.MetricsInterface
+	if conf.MetricsEnabled {
+		metricsLabels := make(map[string]string, 0)
+		pm := metrics.NewPrometheusMetricsWithLabels("socketrush", "mac", metricsLabels)
+		s.PrometheusMetrics = pm
+		metricsManager = pm
+	} else {
+		metricsManager = &metrics.NoOpMetrics{}
+	}
+
+	adapter, err := loadAdapter(ctx, conf, metricsManager)
 	if err != nil {
 		return nil, err
 	}
@@ -44,15 +60,6 @@ func NewServer(ctx context.Context, conf *config.ServerConfig) (*Server, error) 
 	appManager, err := loadAppManager(ctx, conf)
 	if err != nil {
 		return nil, err
-	}
-
-	var metricsManager metrics.MetricsInterface
-
-	if conf.EnableMetrics {
-		metricsLabels := make(map[string]string, 0)
-		metricsManager = metrics.NewPrometheusMetricsWithLabels(metricsLabels)
-	} else {
-		metricsManager = &metrics.NoOpMetrics{}
 	}
 
 	cacheManager, err := loadCacheManager(ctx, conf)
@@ -80,16 +87,23 @@ func NewServer(ctx context.Context, conf *config.ServerConfig) (*Server, error) 
 		return nil, err
 	}
 
-	s := &Server{
-		ctx:            ctx,
-		config:         conf,
-		AppManager:     appManager,
-		Adapter:        adapter,
-		MetricsManager: metricsManager,
-		CacheManager:   cacheManager,
-		QueueManager:   queueManager,
-		WebhookSender:  webhookSender,
-	}
+	s.AppManager = appManager
+	s.Adapter = adapter
+	s.MetricsManager = metricsManager
+	s.CacheManager = cacheManager
+	s.QueueManager = queueManager
+	s.WebhookSender = webhookSender
+
+	// s := &Server{
+	// 	ctx:            ctx,
+	// 	config:         conf,
+	// 	AppManager:     appManager,
+	// 	Adapter:        adapter,
+	// 	MetricsManager: metricsManager,
+	// 	CacheManager:   cacheManager,
+	// 	QueueManager:   queueManager,
+	// 	WebhookSender:  webhookSender,
+	// }
 
 	return s, nil
 }
@@ -148,7 +162,7 @@ func loadAppManager(_ context.Context, conf *config.ServerConfig) (apps.AppManag
 	return appManager, nil
 }
 
-func loadAdapter(ctx context.Context, conf *config.ServerConfig) (AdapterInterface, error) {
+func loadAdapter(ctx context.Context, conf *config.ServerConfig, metricsManager metrics.MetricsInterface) (AdapterInterface, error) {
 	var adapter AdapterInterface
 	var err error
 
@@ -157,12 +171,12 @@ func loadAdapter(ctx context.Context, conf *config.ServerConfig) (AdapterInterfa
 		if conf.RedisInstance == nil {
 			return nil, errors.New("redis instance not configured")
 		}
-		adapter, err = NewRedisAdapter(ctx, conf.RedisInstance.Client, conf.RedisPrefix, "int")
+		adapter, err = NewRedisAdapter(ctx, conf.RedisInstance.Client, conf.RedisPrefix, "int", metricsManager)
 		if err != nil {
 			return nil, err
 		}
 	default:
-		adapter = &LocalAdapter{}
+		adapter = NewLocalAdapter(metricsManager)
 		err = adapter.Init()
 		if err != nil {
 			return nil, err

@@ -172,7 +172,8 @@ func ServeWs(server *Server, w http.ResponseWriter, r *http.Request, appKey, cli
 		ws.WatchForAuthentication()
 	}
 
-	// TODO metrics: markNewConnection(ws)
+	// Mark new connection in metrics
+	server.MetricsManager.MarkNewConnection(app.ID)
 }
 
 // closeConnectionWithError closes the connection with an error message

@@ -71,6 +71,11 @@ func (w *WebSocket) Send(msg []byte) {
 		w.closed = true
 	}
 	w.sendMutex.Unlock()
+	// Mark WebSocket message sent in metrics
+	if w.server.MetricsManager != nil {
+		w.server.MetricsManager.MarkWsMessageSent(w.app.ID, msg)
+	}
+
 	// reset the read timeout after a successful send, because the pusher client will reset it on receive
 	w.resetReadTimeout()
 }
@@ -78,6 +83,38 @@ func (w *WebSocket) Send(msg []byte) {
 // Close cleanly shuts down the WebSocket connection due to server shutdown
 func (w *WebSocket) Close() {
 	w.closeConnection(util.ErrCodeServerShuttingDown)
+}
+
+// updateChannelMetrics updates channel-related metrics
+func (w *WebSocket) updateChannelMetrics() {
+	// Get all channels and categorize them
+	if w.server.MetricsManager == nil {
+		return
+	}
+
+	// channels := w.server.Adapter.GetChannelsWithSocketsCount(w.app.ID, false)
+	//
+	// // Calculate channel counts by type
+	// totalChannelsCount := int64(len(channels))
+	// presenceChannelsCount := int64(0)
+	// privateChannelsCount := int64(0)
+	// publicChannelsCount := int64(0)
+	//
+	// for channelName := range channels {
+	// 	if util.IsPresenceChannel(channelName) {
+	// 		presenceChannelsCount++
+	// 	} else if util.IsPrivateChannel(channelName) {
+	// 		privateChannelsCount++
+	// 	} else {
+	// 		publicChannelsCount++
+	// 	}
+	// }
+	//
+	// // Update metrics
+	// w.server.MetricsManager.SetChannelsTotal(float64(totalChannelsCount))
+	// w.server.MetricsManager.SetPresenceChannels(float64(presenceChannelsCount))
+	// w.server.MetricsManager.SetPrivateChannels(float64(privateChannelsCount))
+	// w.server.MetricsManager.SetPublicChannels(float64(publicChannelsCount))
 }
 
 // Listen continuously reads messages from the WebSocket connection
@@ -104,6 +141,11 @@ func (w *WebSocket) Listen() {
 
 		// reset readTimeout
 		w.resetReadTimeout()
+
+		// Mark WebSocket message received in metrics
+		if w.server.MetricsManager != nil {
+			w.server.MetricsManager.MarkWsMessageReceived(w.app.ID, msgRaw)
+		}
 
 		// parse incoming payload using msgRaw
 		parseErr := w.parseIncomingPayload(msgRaw)
@@ -197,7 +239,10 @@ func (w *WebSocket) closeConnection(code util.ErrorCode) {
 	if w.app != nil && w.server != nil && w.server.Adapter != nil {
 
 		_ = w.server.Adapter.RemoveSocket(w.app.ID, w.ID)
-		// todo metrics mark disconnection
+		// Mark disconnection in metrics
+		if w.server.MetricsManager != nil {
+			w.server.MetricsManager.MarkDisconnection(w.app.ID)
+		}
 	}
 
 	if w.userID != "" {
@@ -400,9 +445,17 @@ func (w *WebSocket) handleReadMessageError(err error) {
 		} else {
 			w.debugf("Unexpected close error: %s", err)
 		}
+		// Mark error in metrics
+		if w.server.MetricsManager != nil {
+			w.server.MetricsManager.MarkError("websocket_abnormal_closure", w.app.ID)
+		}
 		w.closeConnection(util.ErrCodeWebsocketAbnormalClosure)
 	} else {
 		w.tracef("Closing connection as expected: %s", err.Error())
+		// Mark error in metrics
+		if w.server.MetricsManager != nil {
+			w.server.MetricsManager.MarkError("websocket_expected_closure", w.app.ID)
+		}
 		w.closeConnection(util.ErrCodeCloseExpected)
 	}
 }
@@ -625,7 +678,9 @@ func (w *WebSocket) parseIncomingPayload(msgRaw []byte) *util.Error {
 
 	}
 	if w.app != nil && w.app.ID != "" {
-		w.server.MetricsManager.MarkWsMessageReceived(w.app.ID, requestEvent)
+		if w.server.MetricsManager != nil {
+			w.server.MetricsManager.MarkWsMessageReceived(w.app.ID, requestEvent)
+		}
 	}
 
 	return returnCode

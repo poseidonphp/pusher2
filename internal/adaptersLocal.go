@@ -6,14 +6,26 @@ import (
 	"sync"
 	"time"
 
-	pusherClient "github.com/pusher/pusher-http-go/v5"
 	"pusher/internal/constants"
+	"pusher/internal/metrics"
+	"pusher/internal/util"
 	"pusher/log"
+
+	pusherClient "github.com/pusher/pusher-http-go/v5"
 )
 
 type LocalAdapter struct {
-	Namespaces map[constants.AppID]*Namespace
-	mutex      sync.Mutex
+	Namespaces     map[constants.AppID]*Namespace
+	mutex          sync.Mutex
+	metricsManager metrics.MetricsInterface
+}
+
+// NewLocalAdapter creates a new LocalAdapter with metrics support
+func NewLocalAdapter(metricsManager metrics.MetricsInterface) *LocalAdapter {
+	return &LocalAdapter{
+		Namespaces:     make(map[constants.AppID]*Namespace),
+		metricsManager: metricsManager,
+	}
 }
 
 func (l *LocalAdapter) createBlankNamespace() *Namespace {
@@ -33,6 +45,39 @@ func (l *LocalAdapter) createBlankNamespace() *Namespace {
 	}()
 
 	return n
+}
+
+// updateChannelMetrics updates channel-related metrics for the LocalAdapter
+func (l *LocalAdapter) updateChannelMetrics(appID constants.AppID) {
+
+	// Get all channels and categorize them
+	// All of the calls to this method are made with the mutex locked, so we need to unlock it before calling GetChannelsWithSocketsCount to avoid a deadlock
+	// and then lock it again afterwards
+	l.mutex.Unlock()
+	channels := l.GetChannelsWithSocketsCount(appID, false)
+	l.mutex.Lock()
+	//
+	// Calculate channel counts by type
+	totalChannelsCount := int64(len(channels))
+	presenceChannelsCount := int64(0)
+	privateChannelsCount := int64(0)
+	publicChannelsCount := int64(0)
+
+	for channelName := range channels {
+		if util.IsPresenceChannel(channelName) {
+			presenceChannelsCount++
+		} else if util.IsPrivateChannel(channelName) {
+			privateChannelsCount++
+		} else {
+			publicChannelsCount++
+		}
+	}
+
+	// Update metrics
+	l.metricsManager.SetChannelsTotal(float64(totalChannelsCount))
+	l.metricsManager.SetPresenceChannels(float64(presenceChannelsCount))
+	l.metricsManager.SetPrivateChannels(float64(privateChannelsCount))
+	l.metricsManager.SetPublicChannels(float64(publicChannelsCount))
 }
 
 func (l *LocalAdapter) Init() error {
@@ -62,6 +107,9 @@ func (l *LocalAdapter) AddSocket(appID constants.AppID, ws *WebSocket) error {
 	if !l.Namespaces[appID].AddSocket(ws) {
 		return errors.New("socket already exists")
 	}
+
+	// Update channel metrics after adding socket
+	l.updateChannelMetrics(appID)
 	return nil
 }
 
@@ -70,6 +118,8 @@ func (l *LocalAdapter) RemoveSocket(appID constants.AppID, wsID constants.Socket
 	defer l.mutex.Unlock()
 	if _, ok := l.Namespaces[appID]; ok {
 		l.Namespaces[appID].RemoveSocket(wsID)
+		// Update channel metrics after removing socket
+		l.updateChannelMetrics(appID)
 	}
 	return nil
 }
@@ -81,7 +131,10 @@ func (l *LocalAdapter) AddToChannel(appID constants.AppID, channel constants.Cha
 		return 0, errors.New("namespace not found")
 	}
 
-	return l.Namespaces[appID].AddToChannel(ws, channel), nil
+	count := l.Namespaces[appID].AddToChannel(ws, channel)
+	// Update channel metrics after adding to channel
+	l.updateChannelMetrics(appID)
+	return count, nil
 }
 
 func (l *LocalAdapter) RemoveFromChannel(appID constants.AppID, channels []constants.ChannelName, wsID constants.SocketID) int64 {
@@ -90,7 +143,10 @@ func (l *LocalAdapter) RemoveFromChannel(appID constants.AppID, channels []const
 	if _, ok := l.Namespaces[appID]; !ok {
 		return 0
 	}
-	return l.Namespaces[appID].RemoveFromChannel(wsID, channels)
+	count := l.Namespaces[appID].RemoveFromChannel(wsID, channels)
+	// Update channel metrics after removing from channel
+	l.updateChannelMetrics(appID)
+	return count
 }
 
 func (l *LocalAdapter) Send(appID constants.AppID, channel constants.ChannelName, data []byte, exceptIDs ...constants.SocketID) error {
