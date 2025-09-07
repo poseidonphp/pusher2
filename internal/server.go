@@ -2,7 +2,8 @@ package internal
 
 import (
 	"context"
-
+	"errors"
+	"os"
 	"sync"
 
 	"pusher/internal/apps"
@@ -15,21 +16,47 @@ import (
 )
 
 type Server struct {
-	config         *config.ServerConfig
-	ctx            context.Context
-	AppManager     apps.AppManagerInterface
-	Adapter        AdapterInterface
-	MetricsManager metrics.MetricsInterface
-	CacheManager   cache.CacheContract
-	QueueManager   queues.QueueInterface
-	WebhookSender  *webhooks.WebhookSender
-	Closing        bool
+	config            *config.ServerConfig
+	ctx               context.Context
+	AppManager        apps.AppManagerInterface
+	Adapter           AdapterInterface
+	MetricsManager    metrics.MetricsInterface
+	PrometheusMetrics *metrics.PrometheusMetrics
+	CacheManager      cache.CacheContract
+	QueueManager      queues.QueueInterface
+	WebhookSender     *webhooks.WebhookSender
+	Closing           bool
 	// websocketPool  sync.Pool
 }
 
+// NewServer creates a new server instance with the provided configuration.
+//
+// This does not run the web server, but instead manages the storage of connected clients
+// and handles the pub/sub system.
+//
+// It initializes various components such as the adapter, app manager, metrics manager,
+// cache manager, and queue manager based on the provided configuration.
 func NewServer(ctx context.Context, conf *config.ServerConfig) (*Server, error) {
+	if conf == nil {
+		return nil, errors.New("server config is nil")
+	}
+	s := &Server{
+		ctx:    ctx,
+		config: conf,
+	}
 
-	adapter, err := loadAdapter(ctx, conf)
+	// Initialize metrics manager first
+	var metricsManager metrics.MetricsInterface
+	if conf.MetricsEnabled {
+		metricsLabels := make(map[string]string, 0)
+		pm := metrics.NewPrometheusMetricsWithLabels("socketrush", "mac", metricsLabels)
+		s.PrometheusMetrics = pm
+		metricsManager = pm
+	} else {
+		metricsManager = &metrics.NoOpMetrics{}
+	}
+
+	adapter, err := loadAdapter(ctx, conf, metricsManager)
 	if err != nil {
 		return nil, err
 	}
@@ -38,8 +65,6 @@ func NewServer(ctx context.Context, conf *config.ServerConfig) (*Server, error) 
 	if err != nil {
 		return nil, err
 	}
-
-	metricsManager := &metrics.PrometheusMetrics{}
 
 	cacheManager, err := loadCacheManager(ctx, conf)
 	if err != nil {
@@ -56,9 +81,16 @@ func NewServer(ctx context.Context, conf *config.ServerConfig) (*Server, error) 
 	// 	}
 	// }
 
+	awsRegion := os.Getenv("AWS_REGION")
+
+	snsHook, snsErr := webhooks.NewSnsWebhook(awsRegion)
+	if snsErr != nil {
+		return nil, snsErr
+	}
+
 	webhookSender := &webhooks.WebhookSender{
 		HttpSender: &webhooks.HttpWebhook{},
-		SNSSender:  &webhooks.SnsWebhook{},
+		SNSSender:  snsHook,
 	}
 
 	queueManager, err := loadQueueManager(ctx, conf, webhookSender)
@@ -66,23 +98,22 @@ func NewServer(ctx context.Context, conf *config.ServerConfig) (*Server, error) 
 		return nil, err
 	}
 
-	s := &Server{
-		ctx:            ctx,
-		config:         conf,
-		AppManager:     appManager,
-		Adapter:        adapter,
-		MetricsManager: metricsManager,
-		CacheManager:   cacheManager,
-		QueueManager:   queueManager,
-	}
+	s.AppManager = appManager
+	s.Adapter = adapter
+	s.MetricsManager = metricsManager
+	s.CacheManager = cacheManager
+	s.QueueManager = queueManager
+	s.WebhookSender = webhookSender
 
-	// s.websocketPool = sync.Pool{
-	// 	New: func() interface{} {
-	// 		return &WebSocket{
-	// 			SubscribedChannels: make(map[constants.ChannelName]*Channel),
-	// 			PresenceData:       make(map[constants.ChannelName]*pusherClient.MemberData),
-	// 		}
-	// 	},
+	// s := &Server{
+	// 	ctx:            ctx,
+	// 	config:         conf,
+	// 	AppManager:     appManager,
+	// 	Adapter:        adapter,
+	// 	MetricsManager: metricsManager,
+	// 	CacheManager:   cacheManager,
+	// 	QueueManager:   queueManager,
+	// 	WebhookSender:  webhookSender,
 	// }
 
 	return s, nil
@@ -90,7 +121,7 @@ func NewServer(ctx context.Context, conf *config.ServerConfig) (*Server, error) 
 
 func (s *Server) CloseAllLocalSockets() {
 	// implement similar to ws-handler.ts line 231
-	log.Logger().Info("Closing all local sockets")
+	log.Logger().Debug("Closing all local sockets")
 	namespaces, err := s.Adapter.GetNamespaces()
 	if err != nil {
 		return
@@ -115,9 +146,8 @@ func (s *Server) CloseAllLocalSockets() {
 		}
 	}
 	wg.Wait()
-	log.Logger().Info("All local sockets closed. Clearing namespaces")
+	log.Logger().Debug("All local sockets closed. Clearing namespaces")
 	s.Adapter.ClearNamespaces()
-	// runtime.GC()
 }
 
 func loadAppManager(_ context.Context, conf *config.ServerConfig) (apps.AppManagerInterface, error) {
@@ -143,18 +173,21 @@ func loadAppManager(_ context.Context, conf *config.ServerConfig) (apps.AppManag
 	return appManager, nil
 }
 
-func loadAdapter(ctx context.Context, conf *config.ServerConfig) (AdapterInterface, error) {
+func loadAdapter(ctx context.Context, conf *config.ServerConfig, metricsManager metrics.MetricsInterface) (AdapterInterface, error) {
 	var adapter AdapterInterface
 	var err error
 
 	switch conf.AdapterDriver {
 	case "redis":
-		adapter, err = NewRedisAdapter(ctx, conf.RedisInstance.Client, conf.RedisPrefix, "int")
+		if conf.RedisInstance == nil {
+			return nil, errors.New("redis instance not configured")
+		}
+		adapter, err = NewRedisAdapter(ctx, conf.RedisInstance.Client, conf.RedisPrefix, "int", metricsManager)
 		if err != nil {
 			return nil, err
 		}
 	default:
-		adapter = &LocalAdapter{}
+		adapter = NewLocalAdapter(metricsManager)
 		err = adapter.Init()
 		if err != nil {
 			return nil, err
@@ -168,6 +201,9 @@ func loadQueueManager(ctx context.Context, conf *config.ServerConfig, webhookSen
 	var err error
 	switch conf.QueueDriver {
 	case "redis":
+		if conf.RedisInstance == nil {
+			return nil, errors.New("redis instance not configured")
+		}
 		queueManager, err = queues.NewRedisQueue(ctx, conf.RedisInstance, conf.RedisPrefix, webhookSender)
 		if err != nil {
 			return nil, err
@@ -181,12 +217,15 @@ func loadQueueManager(ctx context.Context, conf *config.ServerConfig, webhookSen
 	return queueManager, nil
 }
 
-func loadCacheManager(_ context.Context, conf *config.ServerConfig) (cache.CacheContract, error) {
+func loadCacheManager(ctx context.Context, conf *config.ServerConfig) (cache.CacheContract, error) {
 	var cacheManager cache.CacheContract
 	var err error
 
 	switch conf.ChannelCacheDriver {
 	case "redis":
+		if conf.RedisInstance == nil {
+			return nil, errors.New("redis instance not configured")
+		}
 		cacheManager = &cache.RedisCache{
 			Client: conf.RedisInstance.Client,
 			Prefix: conf.RedisPrefix,
@@ -195,7 +234,7 @@ func loadCacheManager(_ context.Context, conf *config.ServerConfig) (cache.Cache
 		cacheManager = &cache.LocalCache{}
 	}
 
-	err = cacheManager.Init()
+	err = cacheManager.Init(ctx)
 	if err != nil {
 		return nil, err
 	}

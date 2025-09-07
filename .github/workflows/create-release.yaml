@@ -11,6 +11,26 @@ permissions:
     packages: write
 
 jobs:
+  go-coverage-test:
+    name: Go Test with Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.24.2'
+      - name: Install dependencies
+        run: go mod download
+      - name: Run tests with coverage
+        run: |
+          go test -coverprofile=coverage.txt ./...
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
   create-release:
     runs-on: ubuntu-latest
     outputs:
@@ -84,7 +104,6 @@ jobs:
           goarch: ${{ matrix.goarch }}
           asset_name: 'socket_rush_${{ matrix.goos }}_${{ matrix.goarch }}'
           #          goversion: "https://dl.google.com/go/go1.13.1.linux-amd64.tar.gz"
-          project_path: "./cmd/pusher/"
+          project_path: "./cmd/"
           binary_name: "socket_rush_${{ matrix.goos }}_${{ matrix.goarch }}"
-          extra_files: LICENSE README.md
           ldflags: "-s -w -X main.version=${{ needs.create-release.outputs.new_release_tag }}"

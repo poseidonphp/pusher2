@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -8,7 +9,7 @@ import (
 )
 
 type CacheContract interface {
-	Init() error
+	Init(ctx context.Context) error
 	Get(key string) (string, bool)
 	Set(key string, value string)                      // create or update the key with the value
 	SetEx(key string, value string, ttl time.Duration) // create or update the key with the value and set expiration

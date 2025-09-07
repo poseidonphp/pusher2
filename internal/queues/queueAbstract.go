@@ -17,6 +17,9 @@ func NewAbstractQueue(ctx context.Context, queueImpl QueueInterface, webhookSend
 	if queueImpl == nil {
 		return nil, errors.New("queue implementation is nil")
 	}
+	if ctx == nil {
+		return nil, errors.New("context is nil")
+	}
 	fd := &FlapDetector{
 		FlapEnabled:         enableFlapDetection,
 		flapWindowInSeconds: flapDetectionWindow,
@@ -63,21 +66,25 @@ func (q *AbstractQueue) Send(app *apps.App, event *pusher.WebhookEvent) {
 	var key string
 	useFlapDetection := true
 
-	switch event.Name {
-	// case string(constants.WebHookChannelOccupied):
-	// 	eventType = Connect
-	// 	key = fmt.Sprintf("app:%s:channel:%s", app.ID, event.Channel)
-	case string(constants.WebHookChannelVacated):
-		eventType = Disconnect
-		key = fmt.Sprintf("app:%s:channel:%s", app.ID, event.Channel)
-	// case string(constants.WebHookMemberAdded):
-	// 	eventType = Connect
-	// 	key = fmt.Sprintf("app:%s:channel:%s:member:%s", app.ID, event.Channel, event.UserID)
-	case string(constants.WebHookMemberRemoved):
-		eventType = Disconnect
-		key = fmt.Sprintf("app:%s:channel:%s:member:%s", app.ID, event.Channel, event.UserID)
-	default:
-		// things like cache_miss, client_event, subscription_count
+	if q.flapDetector.FlapEnabled {
+		switch event.Name {
+		case string(constants.WebHookChannelOccupied):
+			eventType = Connect
+			key = fmt.Sprintf("app:%s:channel:%s", app.ID, event.Channel)
+		case string(constants.WebHookChannelVacated):
+			eventType = Disconnect
+			key = fmt.Sprintf("app:%s:channel:%s", app.ID, event.Channel)
+		case string(constants.WebHookMemberAdded):
+			eventType = Connect
+			key = fmt.Sprintf("app:%s:channel:%s:member:%s", app.ID, event.Channel, event.UserID)
+		case string(constants.WebHookMemberRemoved):
+			eventType = Disconnect
+			key = fmt.Sprintf("app:%s:channel:%s:member:%s", app.ID, event.Channel, event.UserID)
+		default:
+			// things like cache_miss, client_event, subscription_count
+			useFlapDetection = false
+		}
+	} else {
 		useFlapDetection = false
 	}
 
@@ -87,7 +94,6 @@ func (q *AbstractQueue) Send(app *apps.App, event *pusher.WebhookEvent) {
 	} else {
 		// skip flap detection, send right to the queue
 		q.prepareQueuedMessages(app, event)
-		// q.concreteQueue.addToQueue(buildQueuedJobData(app.ID, event))
 	}
 }
 
@@ -224,7 +230,7 @@ func (q *AbstractQueue) SendChannelOccupied(app *apps.App, channel constants.Cha
 }
 
 func (q *AbstractQueue) SendCacheMissed(app *apps.App, channel constants.ChannelName) {
-	if !app.HasChannelOccupiedWebhooks {
+	if !app.HasCacheMissWebhooks {
 		return
 	}
 

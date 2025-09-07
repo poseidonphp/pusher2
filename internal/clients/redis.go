@@ -3,7 +3,7 @@ package clients
 import (
 	"context"
 	"crypto/tls"
-	"errors"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -29,23 +29,34 @@ func (r *RedisClient) GetClient() redis.UniversalClient {
 	return r.Client
 }
 
-func (r *RedisClient) initRedisClient(redisURL string, useTls bool) error {
+func (r *RedisClient) ParseUrlAndGetOptions(redisURL string, forceTls bool) (*redis.UniversalOptions, error) {
 	redisOptions, err := redis.ParseURL(redisURL)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("failed to parse redis url %s: %s", redisURL, err.Error())
 	}
-	universalOptions := &redis.UniversalOptions{
+
+	opts := &redis.UniversalOptions{
 		Addrs:       []string{redisOptions.Addr},
 		DB:          redisOptions.DB,
 		Password:    redisOptions.Password,
 		PoolSize:    redisOptions.PoolSize,
 		PoolTimeout: redisOptions.PoolTimeout,
+		TLSConfig:   redisOptions.TLSConfig,
 	}
-	if useTls {
-		universalOptions.TLSConfig = &tls.Config{
+	if forceTls && opts.TLSConfig == nil {
+		opts.TLSConfig = &tls.Config{
 			MinVersion: tls.VersionTLS12,
 		}
 	}
+	return opts, nil
+}
+
+func (r *RedisClient) initRedisClient(redisURL string, useTls bool) error {
+	universalOptions, err := r.ParseUrlAndGetOptions(redisURL, useTls)
+	if err != nil {
+		return err
+	}
+
 	r.Client = redis.NewUniversalClient(universalOptions)
 
 	_, err = r.Client.Ping(context.Background()).Result()
@@ -58,29 +69,23 @@ func (r *RedisClient) initRedisClient(redisURL string, useTls bool) error {
 func (r *RedisClient) initClusterRedisClient(redisURLs []string, useTls bool) error {
 	var err error
 	var nodes []string
-	var redisOptions *redis.Options
+
+	// Parse the first URL to get common options like Password, DB, etc.
+	universalOptions, err := r.ParseUrlAndGetOptions(redisURLs[0], useTls)
+	if err != nil {
+		return fmt.Errorf("failed to parse redis url %s: %s", redisURLs[0], err.Error())
+	}
+
+	// Parse all URLs to get the addresses
 	for _, redisURL := range redisURLs {
-		redisOptions, err = redis.ParseURL(redisURL)
-		if err != nil {
-			log.Logger().Panic(err)
+		uniOptions, pErr := r.ParseUrlAndGetOptions(redisURL, useTls)
+		if pErr != nil {
+			return pErr
 		}
-		nodes = append(nodes, redisOptions.Addr)
+		nodes = append(nodes, uniOptions.Addrs[0])
 	}
-	if redisOptions == nil {
-		return errors.New("failed to initialize redis options")
-	}
-	universalOptions := &redis.UniversalOptions{
-		Addrs:       nodes,
-		DB:          redisOptions.DB,
-		Password:    redisOptions.Password,
-		PoolSize:    redisOptions.PoolSize,
-		PoolTimeout: redisOptions.PoolTimeout,
-	}
-	if useTls {
-		universalOptions.TLSConfig = &tls.Config{
-			MinVersion: tls.VersionTLS12,
-		}
-	}
+	universalOptions.Addrs = nodes
+
 	r.Client = redis.NewUniversalClient(universalOptions)
 
 	_, err = r.Client.Ping(context.Background()).Result()
@@ -92,23 +97,12 @@ func (r *RedisClient) initClusterRedisClient(redisURLs []string, useTls bool) er
 
 func (r *RedisClient) InitRedis(redisUrl string, redisCluster bool, useTls bool) error {
 	if r.Client == nil {
-		// redisOnce.Do(func() {
 		redisURLs := strings.Split(redisUrl, ",")
 		if len(redisURLs) > 1 || redisCluster {
-			err := r.initClusterRedisClient(redisURLs, useTls)
-			if err != nil {
-				return err
-				// log.Logger().Fatal(err)
-			}
+			return r.initClusterRedisClient(redisURLs, useTls)
 		} else {
-			err := r.initRedisClient(redisURLs[0], useTls)
-			if err != nil {
-				return err
-				// log.Logger().Fatal(err)
-			}
+			return r.initRedisClient(redisURLs[0], useTls)
 		}
-		// })
 	}
-
 	return nil
 }

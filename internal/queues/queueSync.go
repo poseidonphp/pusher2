@@ -32,6 +32,7 @@ type SyncQueue struct {
 
 func (sd *SyncQueue) Init() error {
 	sd.incomingMessages = make(chan *webhooks.QueuedJobData, 100)
+
 	return nil
 }
 
@@ -48,22 +49,13 @@ func (sd *SyncQueue) addToQueue(jobData *webhooks.QueuedJobData) {
 }
 
 func (sd *SyncQueue) monitorQueue(ctx context.Context) {
-	log.Logger().Infoln("Listening for events on local dispatcher")
+	log.Logger().Debug("Listening for events on local dispatcher")
 	for {
 		select {
 		case data := <-sd.incomingMessages:
 			// process the server event
 			log.Logger().Debugf("Dispatching event: %s (%v)", data.Payload.Name, data.Payload.Channel)
-			// wh := &pusher.Webhook{
-			// 	TimeMs: int(time.Now().UnixMilli()),
-			// 	Events: []pusher.WebhookEvent{*data},
-			// }
-
-			// sErr := sd.WebhookManager.Send(*wh)
 			sd.sendWebhook(data)
-			// if sErr != nil {
-			// 	log.Logger().Errorf("Error sending webhook: %s", sErr)
-			// }
 		case <-ctx.Done():
 			log.Logger().Debugln("Stopping local dispatcher due to context cancellation")
 			return

@@ -2,12 +2,15 @@ package internal
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
+
+	"pusher/internal/constants"
+	"pusher/internal/metrics"
+	"pusher/log"
 
 	"github.com/google/uuid"
 	pusherClient "github.com/pusher/pusher-http-go/v5"
-	"pusher/internal/constants"
-	"pusher/log"
 )
 
 type HorizontalInterface interface {
@@ -16,7 +19,12 @@ type HorizontalInterface interface {
 	getNumSub() (int64, error)
 }
 
-func NewHorizontalAdapter(adapter HorizontalInterface) (*HorizontalAdapter, error) {
+func NewHorizontalAdapter(adapter HorizontalInterface, metricsManager metrics.MetricsInterface) (*HorizontalAdapter, error) {
+	if adapter == nil {
+		log.Logger().Errorf("adapter cannot be nil")
+		return nil, fmt.Errorf("adapter cannot be nil")
+	}
+
 	ha := &HorizontalAdapter{
 		concreteAdapter: adapter,
 		requestTimeout:  5,
@@ -25,7 +33,9 @@ func NewHorizontalAdapter(adapter HorizontalInterface) (*HorizontalAdapter, erro
 		requests:        make(map[string]*HorizontalRequest),
 		channel:         "horizontal-adapter",
 		uuid:            uuid.NewString(),
+		metricsManager:  metricsManager,
 	}
+	ha.LocalAdapter.metricsManager = metricsManager
 	err := ha.Init() // calls the init on the local adapter
 	if err != nil {
 		log.Logger().Errorf("Error initializing HorizontalAdapter: %v", err)
@@ -37,17 +47,17 @@ func NewHorizontalAdapter(adapter HorizontalInterface) (*HorizontalAdapter, erro
 type HorizontalRequestType int
 
 const (
-	SOCKETS HorizontalRequestType = iota
-	CHANNELS
-	CHANNEL_SOCKETS
-	CHANNEL_MEMBERS
-	SOCKETS_COUNT
-	CHANNEL_MEMBERS_COUNT
-	CHANNEL_SOCKETS_COUNT
-	SOCKET_EXISTS_IN_CHANNEL
-	CHANNELS_WITH_SOCKETS_COUNT
-	TERMINATE_USER_CONNECTIONS
-	PRESENCE_CHANNELS_WITH_USERS_COUNT
+	SOCKETS                            HorizontalRequestType = 0
+	CHANNELS                           HorizontalRequestType = 1
+	CHANNEL_SOCKETS                    HorizontalRequestType = 2
+	CHANNEL_MEMBERS                    HorizontalRequestType = 3
+	SOCKETS_COUNT                      HorizontalRequestType = 4
+	CHANNEL_MEMBERS_COUNT              HorizontalRequestType = 5
+	CHANNEL_SOCKETS_COUNT              HorizontalRequestType = 6
+	SOCKET_EXISTS_IN_CHANNEL           HorizontalRequestType = 7
+	CHANNELS_WITH_SOCKETS_COUNT        HorizontalRequestType = 8
+	TERMINATE_USER_CONNECTIONS         HorizontalRequestType = 9
+	PRESENCE_CHANNELS_WITH_USERS_COUNT HorizontalRequestType = 10
 )
 
 type HorizontalRequestExtra struct {
@@ -65,11 +75,10 @@ type HorizontalRequest struct {
 	appID               constants.AppID
 	requestType         HorizontalRequestType
 	timestamp           time.Time
+	startTime           time.Time                // Used for metrics timing
 	requestResolveChan  chan *HorizontalResponse // used to receive incoming responses from other nodes
 	requestResponseChan chan *HorizontalResponse // used to send the final aggregated responses to the requestor
-	// resolve     func()
-	// reject      func()
-	timeout any
+	timeout             any
 	HorizontalRequestExtra
 }
 
@@ -111,7 +120,7 @@ type horizontalPubsubBroadcastedMessage struct {
 	ExceptingIds constants.SocketID
 }
 
-// HorizontalAdapter behaves similar to an abstract class; it has methods that can be used by other structs that implment
+// HorizontalAdapter behaves similar to an abstract class; it has methods that can be used by other structs that implement
 // and will satisfy the HorizontalInterface. It also has a concreteAdapter that should store an instance of the
 // actual horizontal driver being used (ie redis). You should never directly assign the HorizontalAdapter as the
 // adapter being used.
@@ -125,6 +134,7 @@ type HorizontalAdapter struct {
 	uuid            string
 	// resolvers       map[HorizontalRequestType]horizontalResolver
 	concreteAdapter HorizontalInterface
+	metricsManager  metrics.MetricsInterface
 }
 
 type AdapterMessageToSend struct {
@@ -228,6 +238,7 @@ func (ha *HorizontalAdapter) GetSocketsCount(appID constants.AppID, onlyLocal bo
 		numSub:     numberOfSubscribers,
 		totalCount: socketCount,
 	}
+
 	response := ha.sendRequest(appID, SOCKETS_COUNT, requestExtra, nil)
 	return response.TotalCount
 }
@@ -256,6 +267,7 @@ func (ha *HorizontalAdapter) GetChannels(appId constants.AppID, onlyLocal bool) 
 	if response != nil {
 		return response.Channels
 	}
+
 	return make(map[constants.ChannelName][]constants.SocketID)
 }
 
@@ -280,6 +292,7 @@ func (ha *HorizontalAdapter) GetChannelsWithSocketsCount(appID constants.AppID, 
 		numSub:                   numSub,
 		channelsWithSocketsCount: localSocketCount,
 	}
+
 	response := ha.sendRequest(appID, CHANNELS_WITH_SOCKETS_COUNT, requestExtra, nil)
 	if response != nil {
 		return response.ChannelsWithSocketsCount
@@ -650,6 +663,8 @@ func (ha *HorizontalAdapter) onResponse(channel string, msg string) {
 	ha.mutex.Lock()
 	if request, hasRequest := ha.requests[response.RequestID]; hasRequest {
 		ha.mutex.Unlock()
+		// Mark horizontal adapter request received in metrics
+		ha.metricsManager.MarkHorizontalAdapterRequestReceived(request.appID)
 		// process the response
 		log.Logger().Trace("Processing response for request ID: ", response.RequestID)
 
@@ -678,6 +693,7 @@ func (ha *HorizontalAdapter) sendRequest(appId constants.AppID, requestType Hori
 		appID:               appId,
 		requestType:         requestType,
 		timestamp:           time.Now(),
+		startTime:           time.Now(),
 		requestResolveChan:  make(chan *HorizontalResponse),
 		requestResponseChan: make(chan *HorizontalResponse),
 	}
@@ -722,7 +738,8 @@ func (ha *HorizontalAdapter) sendRequest(appId constants.AppID, requestType Hori
 		body.Opts = requestOptions.Opts
 	}
 	ha.concreteAdapter.broadcastToChannel(ha.requestChannel, string(body.ToJson()))
-	// todo metrics markHorizontalAdapterRequestSent
+	// Mark horizontal adapter request sent in metrics
+	ha.metricsManager.MarkHorizontalAdapterRequestSent(appId)
 
 	// monitor the requestResolveChan and watch for an incoming message HorizontalResponse
 	// if the message is not received within the timeout, return an error
@@ -730,6 +747,10 @@ func (ha *HorizontalAdapter) sendRequest(appId constants.AppID, requestType Hori
 	select {
 	case response := <-newRequest.requestResponseChan:
 		log.Logger().Tracef("Received final response for request ID: %s", requestID)
+		// Mark horizontal adapter resolve time and resolved promises in metrics
+		resolveTime := time.Since(newRequest.startTime).Nanoseconds()
+		ha.metricsManager.TrackHorizontalAdapterResolveTime(appId, resolveTime)
+		ha.metricsManager.TrackHorizontalAdapterResolvedPromises(appId, true)
 		close(newRequest.requestResponseChan)
 		newRequest.requestResponseChan = nil
 		ha.mutex.Lock()
@@ -767,6 +788,8 @@ func (ha *HorizontalAdapter) waitForResponse(request *HorizontalRequest) {
 		case <-time.After(time.Duration(ha.requestTimeout) * time.Second):
 			// timeout reached, close the channel and return the response
 			log.Logger().Tracef("Timeout reached for request ID: %s", request.requestID)
+			// Mark horizontal adapter failed promise in metrics
+			ha.metricsManager.TrackHorizontalAdapterResolvedPromises(request.appID, false)
 			request.requestResponseChan <- finalResponse
 			return
 		case response := <-request.requestResolveChan:

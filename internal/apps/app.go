@@ -1,89 +1,102 @@
 package apps
 
 import (
+	"math"
 	"time"
 
 	"pusher/internal/constants"
 )
 
-// will contain config params that are app-specific
-// will contain helper functions like getting the signingTokenFromRequest
-
-// type App struct {
-// 	ID                           constants.AppID     ` json:"id"`
-// 	Key                          string              `json:"key"`
-// 	Secret                       string              `json:"secret"`
-// 	ActivityTimeout              int                 `json:"activity_timeout"`
-// 	ReadTimeout                  time.Duration       `json:"read_timeout"`
-// 	AuthorizationTimeout         time.Duration       `json:"authorization_timeout"`
-// 	MaxConnections               int64               `json:"max_connections"`
-// 	EnableClientMessages         bool                `json:"enable_client_messages"`
-// 	Enabled                      bool                `json:"enabled"`
-// 	MaxBackendEventsPerSecond    int                 `json:"max_backend_events_per_second"`
-// 	MaxClientEventsPerSecond     int                 `json:"max_client_events_per_second"`
-// 	MaxReadRequestsPerSecond     int                 `json:"max_read_requests_per_second"`
-// 	Webhooks                     []constants.Webhook `json:"webhooks"`
-// 	MaxPresenceMembersPerChannel int                 `json:"max_presence_members_per_channel"`
-// 	MaxPresenceMemberSizeInKb    int                 `json:"max_presence_member_size_in_kb"`
-// 	MaxChannelNameLength         int                 `json:"max_channel_name_length"`
-// 	MaxEventChannelsAtOnce       int                 `json:"max_event_channels_at_once"`
-// 	MaxEventNameLength           int                 `json:"max_event_name_length"`
-// 	MaxEventPayloadInKb          int                 `json:"max_event_payload_in_kb"`
-// 	MaxEventBatchSize            int                 `json:"max_event_batch_size"`
-// 	RequireChannelAuthorization  bool                `json:"require_channel_authorization"`
-// 	HasClientEventWebhooks       bool                `json:"has_client_event_webhooks"`
-// 	HasChannelOccupiedWebhooks   bool                `json:"has_channel_occupied_webhooks"`
-// 	HasChannelVacatedWebhooks    bool                `json:"has_channel_vacated_webhooks"`
-// 	HasMemberAddedWebhooks       bool                `json:"has_member_added_webhooks"`
-// 	HasMemberRemovedWebhooks     bool                `json:"has_member_removed_webhooks"`
-// 	HasCacheMissWebhooks         bool                `json:"has_cache_miss_webhooks"`
-// 	WebhookBatchingEnabled       bool                `json:"webhook_batching_enabled"`
-// 	WebhooksEnabled              bool                `json:"webhooks_enabled"`
-// }
-
 type App struct {
-	ID                           constants.AppID     `mapstructure:"app_id"`
-	Key                          string              `mapstructure:"app_key"`
-	Secret                       string              `mapstructure:"app_secret"`
-	ActivityTimeout              int                 `mapstructure:"app_activity_timeout"`
-	ReadTimeout                  time.Duration       `mapstructure:"-" json:"-"`
-	AuthorizationTimeoutSeconds  int                 `mapstructure:"app_authorization_timeout_seconds"`
-	AuthorizationTimeout         time.Duration       `mapstructure:"-" json:"-"`
-	MaxConnections               int64               `mapstructure:"app_max_connections"`
-	EnableClientMessages         bool                `mapstructure:"app_enable_client_messages"`
-	Enabled                      bool                `mapstructure:"app_enabled"`
-	MaxBackendEventsPerSecond    int                 `mapstructure:"app_max_backend_events_per_second"`
-	MaxClientEventsPerSecond     int                 `mapstructure:"app_max_client_events_per_second"`
-	MaxReadRequestsPerSecond     int                 `mapstructure:"app_max_read_requests_per_second"`
-	Webhooks                     []constants.Webhook `mapstructure:"-" json:"-"`
-	MaxPresenceMembersPerChannel int                 `mapstructure:"app_max_presence_members_per_channel"`
-	MaxPresenceMemberSizeInKb    int                 `mapstructure:"app_max_presence_member_size_in_kb"`
-	MaxChannelNameLength         int                 `mapstructure:"app_max_channel_name_length"`
-	MaxEventChannelsAtOnce       int                 `mapstructure:"app_max_event_channels_at_once"`
-	MaxEventNameLength           int                 `mapstructure:"app_max_event_name_length"`
-	MaxEventPayloadInKb          int                 `mapstructure:"app_max_event_payload_in_kb"`
-	MaxEventBatchSize            int                 `mapstructure:"app_max_event_batch_size"`
-	RequireChannelAuthorization  bool                `mapstructure:"app_require_channel_authorization"`
-	HasClientEventWebhooks       bool                `mapstructure:"app_has_client_event_webhooks"`
-	HasChannelOccupiedWebhooks   bool                `mapstructure:"app_has_channel_occupied_webhooks"`
-	HasChannelVacatedWebhooks    bool                `mapstructure:"app_has_channel_vacated_webhooks"`
-	HasMemberAddedWebhooks       bool                `mapstructure:"app_has_member_added_webhooks"`
-	HasMemberRemovedWebhooks     bool                `mapstructure:"app_has_member_removed_webhooks"`
-	HasCacheMissWebhooks         bool                `mapstructure:"app_has_cache_miss_webhooks"`
-	WebhookBatchingEnabled       bool                `mapstructure:"app_webhook_batching_enabled"`
-	WebhooksEnabled              bool                `mapstructure:"app_webhooks_enabled"`
+	// ID should be a string of numbers only. It is used by the client server to connect to the pusher server
+	ID constants.AppID `mapstructure:"app_id"`
+
+	// Key is used by the end user client to identify the app they want to connect to
+	Key string `mapstructure:"app_key"`
+
+	// Secret is used by the client server to connect to the pusher server
+	Secret string `mapstructure:"app_secret"`
+
+	// ActivityTimeout is in seconds is how much time the server will tell the client to wait between pings
+	ActivityTimeout int `mapstructure:"app_activity_timeout"`
+
+	// ReadTimeout is calculated based on ActivityTimeout to allow for some network latency.
+	// It is the time the server will wait before closing an idle connection.
+	ReadTimeout time.Duration `mapstructure:"-" json:"-"`
+
+	// AuthorizationTimeoutSeconds is in seconds, how long the server will wait for a client to authenticate (if requested)
+	// before closing the connection
+	AuthorizationTimeoutSeconds int           `mapstructure:"app_authorization_timeout_seconds"`
+	AuthorizationTimeout        time.Duration `mapstructure:"-" json:"-"`
+
+	// MaxConnections is the maximum number of concurrent connections this app is allowed to have.
+	// -1 means unlimited
+	MaxConnections int64 `mapstructure:"app_max_connections"`
+
+	// EnableClientMessages allows the client to send messages to the server or other clients via the server
+	EnableClientMessages bool `mapstructure:"app_enable_client_messages"`
+
+	// Enabled determines if the app is enabled or disabled. Disabled apps will reject all connections
+	Enabled bool `mapstructure:"app_enabled"`
+
+	// MaxBackendEventsPerSecond is the maximum number of events per second the app is allowed to send via the server SDKs or REST API
+	MaxBackendEventsPerSecond int                 `mapstructure:"app_max_backend_events_per_second"`
+	MaxClientEventsPerSecond  int                 `mapstructure:"app_max_client_events_per_second"`
+	MaxReadRequestsPerSecond  int                 `mapstructure:"app_max_read_requests_per_second"`
+	Webhooks                  []constants.Webhook `mapstructure:"-" json:"-"`
+
+	// MaxPresenceMembersPerChannel is the maximum number of presence members allowed in a presence channel
+	MaxPresenceMembersPerChannel int `mapstructure:"app_max_presence_members_per_channel"`
+
+	// MaxPresenceMemberSizeInKb is the maximum size of the member info JSON object in kilobytes
+	MaxPresenceMemberSizeInKb int `mapstructure:"app_max_presence_member_size_in_kb"`
+
+	// MaxChannelNameLength is the maximum length of a channel name
+	MaxChannelNameLength int `mapstructure:"app_max_channel_name_length"`
+
+	// MaxEventChannelsAtOnce is the maximum number of channels that can be specified when sending an event
+	MaxEventChannelsAtOnce int `mapstructure:"app_max_event_channels_at_once"`
+	MaxEventNameLength     int `mapstructure:"app_max_event_name_length"`
+
+	// MaxEventPayloadInKb is the maximum size of the event data payload in kilobytes
+	MaxEventPayloadInKb int `mapstructure:"app_max_event_payload_in_kb"`
+	MaxEventBatchSize   int `mapstructure:"app_max_event_batch_size"`
+
+	// RequireChannelAuthorization forces the client to authenticate when establishing a connection to the pusher server,
+	// regardless of the channel type they are subscribing to. This is useful for ensuring that only authorized clients can connect to the server.
+	// If this is enabled, the client must authenticate within the AuthorizationTimeoutSeconds period after connecting,
+	// or the server will close the connection. This is also required to be able to terminate all connections for
+	// a specific user across all devices via the REST API.
+	//
+	// Note: This does not replace the need to authenticate for private and presence channels, which is still required.
+	RequireChannelAuthorization bool `mapstructure:"app_require_channel_authorization"`
+	HasClientEventWebhooks      bool `mapstructure:"app_has_client_event_webhooks"`
+	HasChannelOccupiedWebhooks  bool `mapstructure:"app_has_channel_occupied_webhooks"`
+	HasChannelVacatedWebhooks   bool `mapstructure:"app_has_channel_vacated_webhooks"`
+	HasMemberAddedWebhooks      bool `mapstructure:"app_has_member_added_webhooks"`
+	HasMemberRemovedWebhooks    bool `mapstructure:"app_has_member_removed_webhooks"`
+	HasCacheMissWebhooks        bool `mapstructure:"app_has_cache_miss_webhooks"`
+	WebhookBatchingEnabled      bool `mapstructure:"app_webhook_batching_enabled"`
+	WebhooksEnabled             bool `mapstructure:"app_webhooks_enabled"`
 }
 
 func (a *App) SetMissingDefaults() {
 	a.ActivityTimeout = getValueOrFallback(a.ActivityTimeout, 60)
-	a.ReadTimeout = time.Duration(float64(a.ActivityTimeout)*10.0/9.0) * time.Second
-	a.AuthorizationTimeout = getValueOrFallback(a.AuthorizationTimeout, 5) * time.Second
-	a.MaxConnections = getValueOrFallback(a.MaxConnections, 0)
+
+	// We set the ReadTimeout here, as it is a calculated value based on ActivityTimeout
+	activityTimeoutInt := int64(math.Round((float64(a.ActivityTimeout) * 10.0) / 9.0))
+	a.ReadTimeout = time.Duration(activityTimeoutInt) * time.Second
+
+	// We set the AuthorizationTimeoutSeconds default first, then calculate the AuthorizationTimeout
+	a.AuthorizationTimeoutSeconds = getValueOrFallback(a.AuthorizationTimeoutSeconds, 5)
+	a.AuthorizationTimeout = time.Duration(a.AuthorizationTimeoutSeconds) * time.Second
+
+	a.MaxConnections = getValueOrFallback(a.MaxConnections, -1)
 	a.EnableClientMessages = getValueOrFallback(a.EnableClientMessages, false)
 	a.Enabled = getValueOrFallback(a.Enabled, true)
-	a.MaxBackendEventsPerSecond = getValueOrFallback(a.MaxBackendEventsPerSecond, 0)
-	a.MaxClientEventsPerSecond = getValueOrFallback(a.MaxClientEventsPerSecond, 0)
-	a.MaxReadRequestsPerSecond = getValueOrFallback(a.MaxReadRequestsPerSecond, 0)
+	a.MaxBackendEventsPerSecond = getValueOrFallback(a.MaxBackendEventsPerSecond, -1)
+	a.MaxClientEventsPerSecond = getValueOrFallback(a.MaxClientEventsPerSecond, -1)
+	a.MaxReadRequestsPerSecond = getValueOrFallback(a.MaxReadRequestsPerSecond, -1)
 	a.MaxPresenceMembersPerChannel = getValueOrFallback(a.MaxPresenceMembersPerChannel, 100)
 	a.MaxPresenceMemberSizeInKb = getValueOrFallback(a.MaxPresenceMemberSizeInKb, 10)
 	a.MaxChannelNameLength = getValueOrFallback(a.MaxChannelNameLength, 100)

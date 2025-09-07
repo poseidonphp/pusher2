@@ -25,7 +25,8 @@ func PayloadPack(event, data string) []byte {
 	payload := Payload{Event: event, Data: data}
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
-		panic(err)
+		log.Logger().Errorf("Error marshalling Payload in PayloadPack: %s", err)
+		return ErrorPack(util.ErrCodeInvalidPayload, "Error serializing event data")
 	}
 	return payloadJSON
 }
@@ -44,7 +45,8 @@ func EstablishPack(socketID constants.SocketID, timeout int) []byte {
 	// data := EstablishData{SocketID: socketID, ActivityTimeout: 20}
 	b, err := json.Marshal(data)
 	if err != nil {
-		panic(err)
+		log.Logger().Errorf("Error marshalling EstablishData in EstablishPack: %s", err)
+		return ErrorPack(util.ErrCodeInvalidPayload, "Error serializing event data")
 	}
 	return PayloadPack(constants.PusherConnectionEstablished, string(b[:]))
 }
@@ -68,7 +70,8 @@ func PongPack() []byte {
 
 	b, err := json.Marshal(data)
 	if err != nil {
-		panic(err)
+		log.Logger().Errorf("Error marshalling Pong in PongPack: %s", err)
+		return ErrorPack(util.ErrCodeInvalidPayload, "Error serializing event data")
 	}
 	return b
 }
@@ -113,7 +116,8 @@ func SubscriptionSucceededPack(channel constants.ChannelName, data string) []byt
 
 	b, err := json.Marshal(d)
 	if err != nil {
-		panic(err)
+		log.Logger().Errorf("Error marshalling SubscriptionSucceeded in SubscriptionSucceededPack: %s", err)
+		return ErrorPack(util.ErrCodeInvalidPayload, "Error serializing SubscriptionSucceeded data")
 	}
 	return b
 }
@@ -207,10 +211,15 @@ func ErrorPack(code util.ErrorCode, message string, channel ...constants.Channel
 		ch = string(channel[0])
 	}
 
+	_dataJson, err := json.Marshal(_data)
+	if err != nil {
+		return getFallbackSerializationError()
+	}
+
 	_evt := ChannelEvent{
 		Event:   constants.PusherError,
 		Channel: ch,
-		Data:    _data,
+		Data:    string(_dataJson),
 		// Data:    string(data),
 	}
 
@@ -221,10 +230,14 @@ func ErrorPack(code util.ErrorCode, message string, channel ...constants.Channel
 		if len(channel) > 0 {
 			return []byte(`{"event":"pusher:error","channel":"` + string(channel[0]) + `","data":"{\"code\":4310,\"message\":\"Error serializing error data\"}"}`)
 		}
-		return []byte(`{"event":"pusher:error","data":"{\"code\":4310,\"message\":\"Error serializing error data\"}"}`)
+		return getFallbackSerializationError()
 	}
 
 	return evt
+}
+
+func getFallbackSerializationError() []byte {
+	return []byte(`{"event":"pusher:error","data":"{\"code\":4310,\"message\":\"Error serializing error data\"}"}`)
 }
 
 type PusherApiMessage struct {

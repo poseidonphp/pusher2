@@ -36,20 +36,17 @@ func (fd *FlapDetector) Init() {
 		return
 	}
 	fd.pending = make(map[string]*pendingEvent)
-	if fd.flapWindowInSeconds == 0 {
+	// default flap detection to 3 seconds if not set
+	if fd.flapWindowInSeconds == 0*time.Second {
 		fd.flapWindowInSeconds = 3 * time.Second
 	}
-	// if fd.dispatcher == nil {
-	// 	fd.dispatcher = &SyncQueue{
-	// 		WebhookManager: nil,
-	// 	}
-	// }
+
 }
 
 func (fd *FlapDetector) CheckForFlapping(app *apps.App, key string, event EventType, webhookEvent *pusher.WebhookEvent, dispatchFn func(app *apps.App, webhookEvent *pusher.WebhookEvent)) {
 	if !fd.FlapEnabled {
-		// prepareQueuedMessages(app, webhookEvent)
 		dispatchFn(app, webhookEvent)
+		return
 	}
 	log.Logger().Tracef("Received new event to handle: %s, %s [%s]", event, webhookEvent.Name, key)
 	fd.mu.Lock()
@@ -77,7 +74,6 @@ func (fd *FlapDetector) CheckForFlapping(app *apps.App, key string, event EventT
 			log.Logger().Tracef("Event %s cancelled for key %s", event, key)
 			return
 		default:
-			// prepareQueuedMessages(app, webhookEvent) // prepare the messages
 			dispatchFn(app, webhookEvent) // send to dispatcher
 		}
 		fd.mu.Lock()

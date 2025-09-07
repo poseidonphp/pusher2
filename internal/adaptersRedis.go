@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/redis/go-redis/v9"
+	"pusher/internal/metrics"
 	"pusher/log"
+
+	"github.com/redis/go-redis/v9"
 )
 
-func NewRedisAdapter(ctx context.Context, conn redis.UniversalClient, prefix string, channel string) (*RedisAdapter, error) {
+func NewRedisAdapter(ctx context.Context, conn redis.UniversalClient, prefix string, channel string, metricsManager metrics.MetricsInterface) (*RedisAdapter, error) {
 	r := &RedisAdapter{
 		ctx:       ctx,
 		subClient: conn,
@@ -20,7 +22,7 @@ func NewRedisAdapter(ctx context.Context, conn redis.UniversalClient, prefix str
 		Channel:   channel,
 	}
 	// Create the horizontal adapter, injecting this instance that satisfies the HorizontalInterface
-	ha, err := NewHorizontalAdapter(r)
+	ha, err := NewHorizontalAdapter(r, metricsManager)
 	if err != nil {
 		log.Logger().Errorf("Error creating HorizontalAdapter: %v", err)
 		return nil, err

@@ -3,8 +3,9 @@ package cache
 import (
 	"context"
 	"errors"
-	"github.com/redis/go-redis/v9"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 type RedisCache struct {
@@ -12,7 +13,7 @@ type RedisCache struct {
 	Prefix string
 }
 
-func (r *RedisCache) Init() error {
+func (r *RedisCache) Init(_ context.Context) error {
 	if r.Client == nil {
 		return errors.New("redis Client is not initialized")
 	}

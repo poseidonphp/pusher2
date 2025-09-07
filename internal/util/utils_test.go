@@ -9,6 +9,16 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestFileExists(t *testing.T) {
+	// Test existing file
+	exists := FileExists("utils.go")
+	assert.True(t, exists, "Expected file to exist")
+
+	// Test non-existing file
+	exists = FileExists("non_existing_file.go")
+	assert.False(t, exists, "Expected file to not exist")
+}
+
 func TestGenerateSocketID(t *testing.T) {
 	// Test multiple socket IDs to ensure they follow the pattern
 	for i := 0; i < 5; i++ {
@@ -138,6 +148,7 @@ func TestValidChannel(t *testing.T) {
 		channel  constants.ChannelName
 		expected bool
 	}{
+		{"Server to user channel", "#server-to-user-123", true},
 		{"Valid channel", "test-channel", true},
 		{"Valid channel with underscore", "test_channel", true},
 		{"Valid channel with numbers", "test123", true},
@@ -149,8 +160,36 @@ func TestValidChannel(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := ValidChannel(tc.channel, 0)
+			result := ValidChannel(tc.channel, 50)
 			assert.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+func TestValidateChannelName(t *testing.T) {
+	testCases := []struct {
+		name        string
+		channel     constants.ChannelName
+		maxLength   int
+		expectError bool
+	}{
+		{"Valid channel", "test-channel", 50, false},
+		{"Valid channel with underscore", "test_channel", 50, false},
+		{"Valid channel with numbers", "test123", 50, false},
+		{"Valid channel with special chars", "test-channel@,;=.", 50, false},
+		{"Too long channel name", constants.ChannelName(string(make([]byte, 165))), 164, true},
+		{"Invalid chars", "test%channel", 50, true},
+		{"Invalid chars space", "test channel", 50, true},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateChannelName(tc.channel, tc.maxLength)
+			if tc.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
 		})
 	}
 }
@@ -234,38 +273,39 @@ func TestStr2Int(t *testing.T) {
 func TestValidateChannelAuth(t *testing.T) {
 	// Save original env value and restore after tests
 	originalSecret := env.GetString("APP_SECRET", "")
-	t.Setenv("APP_SECRET", "test_secret")
+	appSecret := "test_secret"
+	t.Setenv("APP_SECRET", appSecret)
 	defer t.Setenv("APP_SECRET", originalSecret)
 
 	socketID := constants.SocketID("1234.5678")
 	channelName := constants.ChannelName("private-channel")
 
 	// Valid signature for given input
-	validSignature := HmacSignature("1234.5678:private-channel", "test_secret")
+	validSignature := HmacSignature("1234.5678:private-channel", appSecret)
 	authToken := "app_key:" + validSignature
 
 	t.Run("Valid auth", func(t *testing.T) {
-		result := ValidateChannelAuth(authToken, socketID, channelName, "")
+		result := ValidateChannelAuth(authToken, appSecret, socketID, channelName, "")
 		assert.True(t, result)
 	})
 
 	t.Run("Empty auth token", func(t *testing.T) {
-		result := ValidateChannelAuth("", socketID, channelName, "")
+		result := ValidateChannelAuth("", appSecret, socketID, channelName, "")
 		assert.False(t, result)
 	})
 
 	t.Run("Invalid auth token format", func(t *testing.T) {
-		result := ValidateChannelAuth("invalid_format", socketID, channelName, "")
+		result := ValidateChannelAuth("invalid_format", appSecret, socketID, channelName, "")
 		assert.False(t, result)
 	})
 
 	t.Run("Empty key part", func(t *testing.T) {
-		result := ValidateChannelAuth(":"+validSignature, socketID, channelName, "")
+		result := ValidateChannelAuth(":"+validSignature, appSecret, socketID, channelName, "")
 		assert.False(t, result)
 	})
 
 	t.Run("Invalid signature", func(t *testing.T) {
-		result := ValidateChannelAuth("app_key:invalid_signature", socketID, channelName, "")
+		result := ValidateChannelAuth("app_key:invalid_signature", appSecret, socketID, channelName, "")
 		assert.False(t, result)
 	})
 
@@ -274,29 +314,7 @@ func TestValidateChannelAuth(t *testing.T) {
 		validSignatureWithData := HmacSignature("1234.5678:private-channel:"+channelData, "test_secret")
 		authTokenWithData := "app_key:" + validSignatureWithData
 
-		result := ValidateChannelAuth(authTokenWithData, socketID, channelName, channelData)
+		result := ValidateChannelAuth(authTokenWithData, appSecret, socketID, channelName, channelData)
 		assert.True(t, result)
-	})
-}
-
-func TestListContains(t *testing.T) {
-	t.Run("String list", func(t *testing.T) {
-		list := []string{"apple", "banana", "cherry"}
-
-		assert.True(t, ListContains(list, "banana"))
-		assert.False(t, ListContains(list, "orange"))
-	})
-
-	t.Run("Int list", func(t *testing.T) {
-		list := []int{1, 2, 3, 4, 5}
-
-		assert.True(t, ListContains(list, 3))
-		assert.False(t, ListContains(list, 6))
-	})
-
-	t.Run("Empty list", func(t *testing.T) {
-		list := []string{}
-
-		assert.False(t, ListContains(list, "anything"))
 	})
 }

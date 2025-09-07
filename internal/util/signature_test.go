@@ -70,6 +70,18 @@ func TestVerify(t *testing.T) {
 		assert.Error(t, err, "Error should be returned for expired timestamp")
 		assert.Equal(t, "invalid timestamp", err.Error())
 	})
+
+	t.Run("InvalidSignature", func(t *testing.T) {
+		now := time.Now().Unix()
+		url := fmt.Sprintf("http://localhost/apps/123456/events?auth_version=1.0&auth_timestamp=%d&auth_signature=invalidsignature", now)
+		req := httptest.NewRequest("POST", url, nil)
+
+		result, err := Verify(req, "123456", "test_secret")
+
+		assert.False(t, result, "Invalid signature should fail verification")
+		assert.Error(t, err, "Error should be returned for invalid signature")
+		assert.Equal(t, "invalid signature", err.Error())
+	})
 }
 
 func TestHmacSignature(t *testing.T) {

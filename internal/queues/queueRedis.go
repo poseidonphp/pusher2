@@ -13,6 +13,9 @@ import (
 )
 
 func NewRedisQueue(ctx context.Context, conn *clients.RedisClient, prefix string, webhookSender *webhooks.WebhookSender) (*RedisQueue, error) {
+	if conn == nil || conn.Client == nil {
+		return nil, errors.New("redis client is nil")
+	}
 	r := &RedisQueue{
 		RedisClient: conn,
 	}
@@ -22,11 +25,6 @@ func NewRedisQueue(ctx context.Context, conn *clients.RedisClient, prefix string
 		return nil, err
 	}
 	r.AbstractQueue = aq
-	// err = r.Init() // this is called by the NewAbstractQueue()
-	// if err != nil {
-	// 	log.Logger().Errorf("Error initializing Redis dispatcher: %v", err)
-	// 	return nil, err
-	// }
 	return r, nil
 }
 
@@ -87,27 +85,23 @@ func (rd *RedisQueue) monitorQueue(ctx context.Context) {
 			}
 			rd.processEvent(eventData, queueName)
 		}
-		// // Use BRPOPLPUSH to block until a message is available and atomically pop it into a new temp queue
-		// // The timeout of 0 means block indefinitely
-		// eventData, err := rd.Client.BRPopLPush(queueName, queueName+"_working", 0).Result()
-		// if err != nil {
-		//	log.Logger().Errorf("Error receiving event from Redis queue: %s", err)
-		//	// Sleep to prevent tight loop in case of persistent errors
-		//	time.Sleep(1 * time.Second)
-		//	continue
-		// }
-		//
-		// rd.processEvent(eventData, queueName)
 	}
 }
 
 func (rd *RedisQueue) processEvent(rawEventString string, queueName string) {
 	// Deserialize the JSON data back to webhook event
-	// var webhookEvent pusher.WebhookEvent
+
 	var payload webhooks.QueuedJobData
 	err := json.Unmarshal([]byte(rawEventString), &payload)
 	if err != nil {
 		log.Logger().Errorf("Error unmarshalling event data: %s", err)
+		// Remove the malformed event from the working queue to prevent blocking
+		r := rd.removeEventFromQueue(rawEventString, queueName)
+		if r != nil {
+			log.Logger().Errorf("Error removing malformed event from working queue: %s", r.Error())
+		} else {
+			log.Logger().Tracef("Successfully removed malformed event from working queue")
+		}
 		return
 	}
 
@@ -123,10 +117,20 @@ func (rd *RedisQueue) processEvent(rawEventString string, queueName string) {
 	rd.sendWebhook(&payload)
 
 	log.Logger().Tracef(".. removing %s from working queue", rawEventString)
-	r := rd.RedisClient.Client.LRem(context.Background(), queueName+"_working", 1, rawEventString)
-	if r.Err() != nil {
-		log.Logger().Errorf("Error removing event from working queue: %s", r.Err())
+	r := rd.removeEventFromQueue(rawEventString, queueName)
+	if r != nil {
+		log.Logger().Errorf("Error removing event from working queue: %s", r.Error())
 	} else {
 		log.Logger().Tracef("Successfully removed event from working queue")
 	}
+}
+
+func (rd *RedisQueue) removeEventFromQueue(rawEventString, queueName string) error {
+	r := rd.RedisClient.Client.LRem(context.Background(), queueName+"_working", 1, rawEventString)
+	if r.Err() != nil {
+		log.Logger().Errorf("Error removing event from working queue: %s", r.Err())
+		return r.Err()
+	}
+	log.Logger().Tracef("Successfully removed event from working queue")
+	return nil
 }
