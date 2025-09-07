@@ -12,149 +12,9 @@ import (
 )
 
 // createTestPrometheusMetrics creates a PrometheusMetrics instance for testing
-// without using promauto to avoid global registry conflicts
+// Now that we use per-instance registries, we can simply use NewPrometheusMetrics()
 func createTestPrometheusMetrics() *PrometheusMetrics {
-	pm := &PrometheusMetrics{
-		labels:        make(map[string]string),
-		customMetrics: make(map[string]prometheus.Collector),
-	}
-
-	// Initialize metrics manually without promauto
-	pm.connectionsTotal = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "connections_total",
-		Help: "Total number of connections established",
-	})
-
-	pm.disconnectionsTotal = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "disconnections_total",
-		Help: "Total number of disconnections",
-	})
-
-	pm.activeConnections = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "active_connections",
-		Help: "Current number of active connections",
-	})
-
-	pm.apiMessagesTotal = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "api_messages_total",
-		Help: "Total number of API messages processed",
-	})
-
-	pm.wsMessagesSentTotal = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "ws_messages_sent_total",
-		Help: "Total number of WebSocket messages sent",
-	})
-
-	pm.wsMessagesReceivedTotal = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "ws_messages_received_total",
-		Help: "Total number of WebSocket messages received",
-	})
-
-	pm.horizontalAdapterRequestsTotal = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "horizontal_adapter_requests_total",
-		Help: "Total number of horizontal adapter requests sent",
-	})
-
-	pm.horizontalAdapterRequestsReceived = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "horizontal_adapter_requests_received_total",
-		Help: "Total number of horizontal adapter requests received",
-	})
-
-	pm.horizontalAdapterResolveTime = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:    "horizontal_adapter_resolve_duration_seconds",
-		Help:    "Horizontal adapter resolve time in seconds",
-		Buckets: prometheus.DefBuckets,
-	})
-
-	pm.horizontalAdapterResolvedPromises = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "horizontal_adapter_resolved_promises_total",
-		Help: "Total number of resolved horizontal adapter promises",
-	})
-
-	pm.horizontalAdapterFailedPromises = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "horizontal_adapter_failed_promises_total",
-		Help: "Total number of failed horizontal adapter promises",
-	})
-
-	pm.channelsTotal = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "channels_total",
-		Help: "Total number of channels",
-	})
-
-	pm.presenceChannels = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "presence_channels_total",
-		Help: "Total number of presence channels",
-	})
-
-	pm.privateChannels = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "private_channels_total",
-		Help: "Total number of private channels",
-	})
-
-	pm.publicChannels = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "public_channels_total",
-		Help: "Total number of public channels",
-	})
-
-	pm.eventsTotal = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "events_total",
-		Help: "Total number of events processed",
-	})
-
-	pm.eventsByType = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "events_by_type_total",
-		Help: "Total number of events by type",
-	}, []string{"event_type", "app_id"})
-
-	pm.eventsByChannel = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "events_by_channel_total",
-		Help: "Total number of events by channel",
-	}, []string{"channel", "app_id"})
-
-	pm.errorsTotal = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "errors_total",
-		Help: "Total number of errors",
-	})
-
-	pm.errorsByType = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "errors_by_type_total",
-		Help: "Total number of errors by type",
-	}, []string{"error_type", "app_id"})
-
-	pm.responseTime = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:    "response_duration_seconds",
-		Help:    "Response time in seconds",
-		Buckets: prometheus.DefBuckets,
-	})
-
-	pm.requestSize = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:    "request_size_bytes",
-		Help:    "Request size in bytes",
-		Buckets: prometheus.ExponentialBuckets(100, 10, 8),
-	})
-
-	pm.responseSize = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:    "response_size_bytes",
-		Help:    "Response size in bytes",
-		Buckets: prometheus.ExponentialBuckets(100, 10, 8),
-	})
-
-	pm.memoryUsage = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "memory_usage_bytes",
-		Help: "Current memory usage in bytes",
-	})
-
-	pm.cpuUsage = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "cpu_usage_percent",
-		Help: "Current CPU usage percentage",
-	})
-
-	pm.goroutinesTotal = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "goroutines_total",
-		Help: "Current number of goroutines",
-	})
-
-	return pm
+	return NewPrometheusMetrics("test", "metrics")
 }
 
 func TestNewPrometheusMetrics(t *testing.T) {
@@ -170,8 +30,7 @@ func TestNewPrometheusMetrics(t *testing.T) {
 			"environment": "test",
 			"version":     "1.0.0",
 		}
-		pm := createTestPrometheusMetrics()
-		pm.labels = labels
+		pm := NewPrometheusMetricsWithLabels("test", "metrics", labels)
 
 		assert.NotNil(t, pm)
 		assert.Equal(t, labels, pm.GetLabels())
@@ -328,7 +187,9 @@ func TestPrometheusMetrics_UtilityMethods(t *testing.T) {
 
 	t.Run("GetMetricsAsPlainText", func(t *testing.T) {
 		text := pm.GetMetricsAsPlainText()
-		assert.Contains(t, text, "go_goroutines") // Example metric from Go runtime
+		// Check for our custom metrics instead of Go runtime metrics
+		assert.Contains(t, text, "test_metrics_connections_total")
+		assert.Contains(t, text, "test_metrics_active_connections")
 		assert.Greater(t, len(text), 0)
 	})
 

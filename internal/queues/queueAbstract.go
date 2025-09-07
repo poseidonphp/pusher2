@@ -17,6 +17,9 @@ func NewAbstractQueue(ctx context.Context, queueImpl QueueInterface, webhookSend
 	if queueImpl == nil {
 		return nil, errors.New("queue implementation is nil")
 	}
+	if ctx == nil {
+		return nil, errors.New("context is nil")
+	}
 	fd := &FlapDetector{
 		FlapEnabled:         enableFlapDetection,
 		flapWindowInSeconds: flapDetectionWindow,

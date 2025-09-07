@@ -2,6 +2,7 @@ package internal
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"pusher/internal/constants"
@@ -19,6 +20,11 @@ type HorizontalInterface interface {
 }
 
 func NewHorizontalAdapter(adapter HorizontalInterface, metricsManager metrics.MetricsInterface) (*HorizontalAdapter, error) {
+	if adapter == nil {
+		log.Logger().Errorf("adapter cannot be nil")
+		return nil, fmt.Errorf("adapter cannot be nil")
+	}
+
 	ha := &HorizontalAdapter{
 		concreteAdapter: adapter,
 		requestTimeout:  5,
@@ -29,6 +35,7 @@ func NewHorizontalAdapter(adapter HorizontalInterface, metricsManager metrics.Me
 		uuid:            uuid.NewString(),
 		metricsManager:  metricsManager,
 	}
+	ha.LocalAdapter.metricsManager = metricsManager
 	err := ha.Init() // calls the init on the local adapter
 	if err != nil {
 		log.Logger().Errorf("Error initializing HorizontalAdapter: %v", err)

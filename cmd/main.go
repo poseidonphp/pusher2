@@ -67,6 +67,11 @@ func main() {
 
 	// Load and start the web server to handle incoming HTTP requests
 	webServer := internal.LoadWebServer(server)
+	webServer.RegisterOnShutdown(func() {
+		logger.Logger().Infoln("Registered Shutdown handler: Web server is shutting down...")
+		server.Closing = true
+		server.CloseAllLocalSockets()
+	})
 
 	// Run the web server in a goroutine with a wait group to manage its lifecycle
 	// and ensure it can be gracefully shut down on interrupt signals.
@@ -89,7 +94,6 @@ func main() {
 	// The metrics server is optional and only started if enabled.
 	// It uses the same wait group to manage its lifecycle.
 	var metricsServer *http.Server
-
 	if serverConfig.MetricsEnabled && server.MetricsManager != nil {
 		metricsServer = serveMetrics(server, serverConfig, &wg)
 	}
@@ -140,10 +144,6 @@ func handleInterrupt(server *internal.Server, wg *sync.WaitGroup, webServer *htt
 
 	// Cancel the context to signal all goroutines to stop
 	cancel()
-
-	// Close the server
-	server.Closing = true
-	server.CloseAllLocalSockets()
 
 	// Shutdown the HTTP server
 	ctx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)

@@ -31,7 +31,11 @@ func checkMessageToBroadcast(c *gin.Context, app *apps.App, apiMsg *payloads.Pus
 	for _, channel := range apiMsg.Channels {
 		if !util.ValidChannel(channel, app.MaxChannelNameLength) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": util.ErrInvalidChannel.Error()})
-			return fmt.Errorf("invalid Channel: %s", channel)
+			tuncatedChannelName := channel
+			if len(channel) > 20 {
+				tuncatedChannelName = channel[:20] + "..."
+			}
+			return fmt.Errorf("invalid Channel: %s", tuncatedChannelName)
 		}
 	}
 
@@ -96,6 +100,8 @@ func EventTrigger(c *gin.Context, server *Server) {
 		log.Logger().Infof("Error checking message to broadcast for appId(%s): %s", app.ID, err)
 		// Mark API message failure in metrics
 		server.MetricsManager.MarkError("api_message_validation_failed", app.ID)
+		// the JSON response code is already handled in checkMessageToBroadcast on error
+		// so we can just return here
 		return
 	}
 

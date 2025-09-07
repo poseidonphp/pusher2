@@ -97,6 +97,9 @@ func (l *LocalAdapter) GetNamespaces() (map[constants.AppID]*Namespace, error) {
 }
 
 func (l *LocalAdapter) AddSocket(appID constants.AppID, ws *WebSocket) error {
+	if l.Namespaces == nil {
+		return errors.New("adapter not initialized")
+	}
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
 	if _, ok := l.Namespaces[appID]; !ok {

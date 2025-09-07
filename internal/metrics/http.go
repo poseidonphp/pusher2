@@ -20,7 +20,7 @@ func NewMetricsHandler(metrics *PrometheusMetrics) *MetricsHandler {
 
 // PrometheusHandler returns an HTTP handler for Prometheus metrics
 func (mh *MetricsHandler) PrometheusHandler() http.Handler {
-	return promhttp.Handler()
+	return promhttp.HandlerFor(mh.metrics.GetRegistry(), promhttp.HandlerOpts{})
 }
 
 // JSONHandler returns an HTTP handler for JSON metrics

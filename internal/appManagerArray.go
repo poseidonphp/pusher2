@@ -15,7 +15,7 @@ type ArrayAppManager struct {
 }
 
 func (a *ArrayAppManager) Init(appsFromConfig []apps.App) error {
-	a.Apps = make(map[constants.AppID]apps.App)
+	a.Apps = make(map[constants.AppID]apps.App, len(appsFromConfig))
 	for _, app := range appsFromConfig {
 		a.Apps[app.ID] = app
 	}
@@ -27,36 +27,6 @@ func (a *ArrayAppManager) Init(appsFromConfig []apps.App) error {
 
 	return nil
 }
-
-// func (a *ArrayAppManager) loadAppFromEnv() error {
-//
-// 	var configuredWebhooks []constants.Webhook
-// 	if env.GetBool("WEBHOOK_ENABLED", false) {
-// 		if env.GetString("WEBHOOK_URL", "") != "" {
-// 			webhook := constants.Webhook{
-// 				URL: env.GetString("WEBHOOK_URL"),
-// 				Filter: constants.WebhookFilters{
-// 					ChannelNameStartsWith: env.GetString("WEBHOOK_FILTER_PREFIX"),
-// 					ChannelNameEndsWith:   env.GetString("WEBHOOK_FILTER_SUFFIX"),
-// 				},
-// 			}
-// 			configuredWebhooks = append(configuredWebhooks, webhook)
-// 		}
-//
-// 		if env.GetString("WEBHOOK_SNS_TOPIC_ARN", "") != "" && env.GetString("WEBHOOK_SNS_REGION", "") != "" {
-// 			webhook := constants.Webhook{
-// 				SNSRegion:   env.GetString("WEBHOOK_SNS_REGION"),
-// 				SNSTopicARN: env.GetString("WEBHOOK_SNS_TOPIC_ARN"),
-// 				Filter: constants.WebhookFilters{
-// 					ChannelNameStartsWith: env.GetString("WEBHOOK_FILTER_PREFIX"),
-// 					ChannelNameEndsWith:   env.GetString("WEBHOOK_FILTER_SUFFIX"),
-// 				},
-// 			}
-// 			configuredWebhooks = append(configuredWebhooks, webhook)
-// 		}
-// 	}
-//
-// }
 
 func (a *ArrayAppManager) GetAllApps() []apps.App {
 	applications := make([]apps.App, 0, len(a.Apps))

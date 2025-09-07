@@ -13,25 +13,25 @@ ui:
 
 .PHONY run:
 run:
-	go run cmd/pusher/main.go
+	go run cmd/main.go
 
 .PHONY run-config-file:
 run-config-file:
-	go run cmd/pusher/main.go --config-file=./config.json
+	go run cmd/main.go --config-file=./config.json
 
 .PHONY run-cli:
 run-cli:
-	go run cmd/pusher/main.go --adapter-driver=redis --cache-driver=redis
+	go run cmd/main.go --adapter-driver=redis --cache-driver=redis
 
 
 
 .PHONY run-alt:
 run-alt:
-	go run cmd/pusher/main.go --port=6002
+	go run cmd/main.go --port=6002
 
 .PHONY run-alt2:
 run-alt2:
-	go run cmd/pusher/main.go --port=6003
+	go run cmd/main.go --port=6003
 
 
 
@@ -51,9 +51,9 @@ auth2:
 
 .PHONY build:
 build:
-	GOOS=darwin GOARCH=amd64 go build -mod=readonly -ldflags="-s -w" -o pusher-server-mac cmd/pusher/main.go
-	GOOS=linux GOARCH=amd64 go build -mod=readonly -ldflags="-s -w" -o pusher-server-x86 cmd/pusher/main.go
-	GOOS=linux GOARCH=arm64 go build -mod=readonly -ldflags="-s -w" -o pusher-server-arm64 cmd/pusher/main.go
+	GOOS=darwin GOARCH=amd64 go build -mod=readonly -ldflags="-s -w" -o pusher-server-mac cmd/main.go
+	GOOS=linux GOARCH=amd64 go build -mod=readonly -ldflags="-s -w" -o pusher-server-x86 cmd/main.go
+	GOOS=linux GOARCH=arm64 go build -mod=readonly -ldflags="-s -w" -o pusher-server-arm64 cmd/main.go
 
 
 .PHONY test:

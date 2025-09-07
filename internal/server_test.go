@@ -10,6 +10,7 @@ import (
 	"pusher/internal/clients"
 	"pusher/internal/config"
 	"pusher/internal/constants"
+	"pusher/internal/metrics"
 	"pusher/internal/webhooks"
 
 	"github.com/alicebob/miniredis/v2"
@@ -326,7 +327,7 @@ func TestLoadAdapter(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 
-			adapter, err := loadAdapter(ctx, tt.config)
+			adapter, err := loadAdapter(ctx, tt.config, &metrics.NoOpMetrics{})
 
 			if tt.expectError {
 				assert.Error(t, err)

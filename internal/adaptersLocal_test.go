@@ -7,6 +7,7 @@ import (
 
 	"pusher/internal/apps"
 	"pusher/internal/constants"
+	"pusher/internal/metrics"
 
 	pusherClient "github.com/pusher/pusher-http-go/v5"
 	"github.com/stretchr/testify/assert"
@@ -66,8 +67,10 @@ func TestLocalAdapterDisconnect(t *testing.T) {
 // ============================================================================
 
 func TestGetNamespace(t *testing.T) {
-	adapter := &LocalAdapter{}
-	adapter.Init()
+	adapter := NewLocalAdapter(&metrics.NoOpMetrics{})
+	err := adapter.Init()
+
+	assert.NoError(t, err)
 
 	appID := constants.AppID("test-app")
 
@@ -79,6 +82,7 @@ func TestGetNamespace(t *testing.T) {
 
 	// Create a namespace by adding a socket
 	ws := createTestWebSocketForAdapter("socket1", "")
+
 	err = adapter.AddSocket(appID, ws)
 	assert.NoError(t, err)
 
@@ -89,7 +93,7 @@ func TestGetNamespace(t *testing.T) {
 }
 
 func TestGetNamespaces(t *testing.T) {
-	adapter := &LocalAdapter{}
+	adapter := NewLocalAdapter(&metrics.NoOpMetrics{})
 	adapter.Init()
 
 	// Initially should be empty
@@ -115,7 +119,7 @@ func TestGetNamespaces(t *testing.T) {
 }
 
 func TestClearNamespace(t *testing.T) {
-	adapter := &LocalAdapter{}
+	adapter := NewLocalAdapter(&metrics.NoOpMetrics{})
 	adapter.Init()
 
 	appID := constants.AppID("test-app")
@@ -140,7 +144,7 @@ func TestClearNamespace(t *testing.T) {
 }
 
 func TestClearNamespaces(t *testing.T) {
-	adapter := &LocalAdapter{}
+	adapter := NewLocalAdapter(&metrics.NoOpMetrics{})
 	adapter.Init()
 
 	// Add some namespaces
@@ -170,7 +174,7 @@ func TestClearNamespaces(t *testing.T) {
 // ============================================================================
 
 func TestLocalAdapterAddSocket(t *testing.T) {
-	adapter := &LocalAdapter{}
+	adapter := NewLocalAdapter(&metrics.NoOpMetrics{})
 	adapter.Init()
 
 	appID := constants.AppID("test-app")
@@ -192,7 +196,7 @@ func TestLocalAdapterAddSocket(t *testing.T) {
 }
 
 func TestLocalAdapterRemoveSocket(t *testing.T) {
-	adapter := &LocalAdapter{}
+	adapter := NewLocalAdapter(&metrics.NoOpMetrics{})
 	adapter.Init()
 
 	appID := constants.AppID("test-app")
@@ -219,7 +223,7 @@ func TestLocalAdapterRemoveSocket(t *testing.T) {
 }
 
 func TestLocalAdapterGetSockets(t *testing.T) {
-	adapter := &LocalAdapter{}
+	adapter := NewLocalAdapter(&metrics.NoOpMetrics{})
 	adapter.Init()
 
 	appID := constants.AppID("test-app")
@@ -242,7 +246,7 @@ func TestLocalAdapterGetSockets(t *testing.T) {
 }
 
 func TestGetSocketsCount(t *testing.T) {
-	adapter := &LocalAdapter{}
+	adapter := NewLocalAdapter(&metrics.NoOpMetrics{})
 	adapter.Init()
 
 	appID := constants.AppID("test-app")
@@ -268,7 +272,7 @@ func TestGetSocketsCount(t *testing.T) {
 // ============================================================================
 
 func TestLocalAdapterAddToChannel(t *testing.T) {
-	adapter := &LocalAdapter{}
+	adapter := NewLocalAdapter(&metrics.NoOpMetrics{})
 	adapter.Init()
 
 	appID := constants.AppID("test-app")
@@ -291,7 +295,7 @@ func TestLocalAdapterAddToChannel(t *testing.T) {
 }
 
 func TestLocalAdapterRemoveFromChannel(t *testing.T) {
-	adapter := &LocalAdapter{}
+	adapter := NewLocalAdapter(&metrics.NoOpMetrics{})
 	adapter.Init()
 
 	appID := constants.AppID("test-app")
@@ -311,7 +315,7 @@ func TestLocalAdapterRemoveFromChannel(t *testing.T) {
 }
 
 func TestLocalAdapterGetChannels(t *testing.T) {
-	adapter := &LocalAdapter{}
+	adapter := NewLocalAdapter(&metrics.NoOpMetrics{})
 	adapter.Init()
 
 	appID := constants.AppID("test-app")
@@ -334,7 +338,7 @@ func TestLocalAdapterGetChannels(t *testing.T) {
 }
 
 func TestLocalAdapterGetChannelsWithSocketsCount(t *testing.T) {
-	adapter := &LocalAdapter{}
+	adapter := NewLocalAdapter(&metrics.NoOpMetrics{})
 	adapter.Init()
 
 	appID := constants.AppID("test-app")
@@ -359,7 +363,7 @@ func TestLocalAdapterGetChannelsWithSocketsCount(t *testing.T) {
 }
 
 func TestLocalAdapterGetChannelSockets(t *testing.T) {
-	adapter := &LocalAdapter{}
+	adapter := NewLocalAdapter(&metrics.NoOpMetrics{})
 	adapter.Init()
 
 	appID := constants.AppID("test-app")
@@ -384,7 +388,7 @@ func TestLocalAdapterGetChannelSockets(t *testing.T) {
 }
 
 func TestGetChannelSocketsCount(t *testing.T) {
-	adapter := &LocalAdapter{}
+	adapter := NewLocalAdapter(&metrics.NoOpMetrics{})
 	adapter.Init()
 
 	appID := constants.AppID("test-app")
@@ -407,7 +411,7 @@ func TestGetChannelSocketsCount(t *testing.T) {
 }
 
 func TestLocalAdapterIsInChannel(t *testing.T) {
-	adapter := &LocalAdapter{}
+	adapter := NewLocalAdapter(&metrics.NoOpMetrics{})
 	adapter.Init()
 
 	appID := constants.AppID("test-app")
@@ -434,7 +438,7 @@ func TestLocalAdapterIsInChannel(t *testing.T) {
 // ============================================================================
 
 func TestLocalAdapterAddUser(t *testing.T) {
-	adapter := &LocalAdapter{}
+	adapter := NewLocalAdapter(&metrics.NoOpMetrics{})
 	adapter.Init()
 
 	appID := constants.AppID("test-app")
@@ -454,7 +458,7 @@ func TestLocalAdapterAddUser(t *testing.T) {
 }
 
 func TestLocalAdapterRemoveUser(t *testing.T) {
-	adapter := &LocalAdapter{}
+	adapter := NewLocalAdapter(&metrics.NoOpMetrics{})
 	adapter.Init()
 
 	appID := constants.AppID("test-app")
@@ -475,7 +479,7 @@ func TestLocalAdapterRemoveUser(t *testing.T) {
 }
 
 func TestLocalAdapterGetUserSockets(t *testing.T) {
-	adapter := &LocalAdapter{}
+	adapter := NewLocalAdapter(&metrics.NoOpMetrics{})
 	adapter.Init()
 
 	appID := constants.AppID("test-app")
@@ -505,7 +509,7 @@ func TestLocalAdapterGetUserSockets(t *testing.T) {
 // ============================================================================
 
 func TestLocalAdapterGetChannelMembers(t *testing.T) {
-	adapter := &LocalAdapter{}
+	adapter := NewLocalAdapter(&metrics.NoOpMetrics{})
 	adapter.Init()
 
 	appID := constants.AppID("test-app")
@@ -544,7 +548,7 @@ func TestLocalAdapterGetChannelMembers(t *testing.T) {
 }
 
 func TestGetChannelMembersCount(t *testing.T) {
-	adapter := &LocalAdapter{}
+	adapter := NewLocalAdapter(&metrics.NoOpMetrics{})
 	adapter.Init()
 
 	appID := constants.AppID("test-app")
@@ -581,7 +585,7 @@ func TestGetChannelMembersCount(t *testing.T) {
 }
 
 func TestLocalAdapterGetPresenceChannelsWithUsersCount(t *testing.T) {
-	adapter := &LocalAdapter{}
+	adapter := NewLocalAdapter(&metrics.NoOpMetrics{})
 	adapter.Init()
 
 	appID := constants.AppID("test-app")
@@ -624,7 +628,7 @@ func TestLocalAdapterGetPresenceChannelsWithUsersCount(t *testing.T) {
 // ============================================================================
 
 func TestSend(t *testing.T) {
-	adapter := &LocalAdapter{}
+	adapter := NewLocalAdapter(&metrics.NoOpMetrics{})
 	adapter.Init()
 
 	appID := constants.AppID("test-app")
@@ -652,7 +656,7 @@ func TestSend(t *testing.T) {
 }
 
 func TestSendToUserChannel(t *testing.T) {
-	adapter := &LocalAdapter{}
+	adapter := NewLocalAdapter(&metrics.NoOpMetrics{})
 	adapter.Init()
 
 	appID := constants.AppID("test-app")
@@ -669,7 +673,7 @@ func TestSendToUserChannel(t *testing.T) {
 }
 
 func TestTerminateUserConnections(t *testing.T) {
-	adapter := &LocalAdapter{}
+	adapter := NewLocalAdapter(&metrics.NoOpMetrics{})
 	adapter.Init()
 
 	appID := constants.AppID("test-app")
@@ -698,7 +702,7 @@ func TestTerminateUserConnections(t *testing.T) {
 // ============================================================================
 
 func TestConcurrentOperations(t *testing.T) {
-	adapter := &LocalAdapter{}
+	adapter := NewLocalAdapter(&metrics.NoOpMetrics{})
 	adapter.Init()
 
 	appID := constants.AppID("test-app")
@@ -728,7 +732,7 @@ func TestConcurrentOperations(t *testing.T) {
 // ============================================================================
 
 func TestEmptyAdapterOperations(t *testing.T) {
-	adapter := &LocalAdapter{}
+	adapter := NewLocalAdapter(&metrics.NoOpMetrics{})
 	adapter.Init()
 
 	appID := constants.AppID("test-app")
@@ -751,7 +755,7 @@ func TestEmptyAdapterOperations(t *testing.T) {
 }
 
 func TestNamespaceAutoCreation(t *testing.T) {
-	adapter := &LocalAdapter{}
+	adapter := NewLocalAdapter(&metrics.NoOpMetrics{})
 	adapter.Init()
 
 	appID := constants.AppID("test-app")

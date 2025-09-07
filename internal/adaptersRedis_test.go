@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"pusher/internal/constants"
+	"pusher/internal/metrics"
 
 	"github.com/alicebob/miniredis/v2"
 	pusherClient "github.com/pusher/pusher-http-go/v5"
@@ -26,7 +27,7 @@ func createTestRedisAdapter(t *testing.T) (*RedisAdapter, *miniredis.Miniredis) 
 	ctx := context.Background()
 
 	// Create Redis adapter
-	adapter, err := NewRedisAdapter(ctx, rdb, "test-prefix", "test-channel")
+	adapter, err := NewRedisAdapter(ctx, rdb, "test-prefix", "test-channel", &metrics.NoOpMetrics{})
 	assert.NoError(t, err)
 	assert.NotNil(t, adapter)
 
@@ -60,7 +61,7 @@ func TestNewRedisAdapter(t *testing.T) {
 	ctx := context.Background()
 
 	// Test successful creation
-	adapter, err := NewRedisAdapter(ctx, rdb, "test-prefix", "test-channel")
+	adapter, err := NewRedisAdapter(ctx, rdb, "test-prefix", "test-channel", &metrics.NoOpMetrics{})
 	assert.NoError(t, err)
 	assert.NotNil(t, adapter)
 	assert.Equal(t, "test-prefix#test-channel", adapter.Channel)
@@ -69,7 +70,7 @@ func TestNewRedisAdapter(t *testing.T) {
 	assert.NotNil(t, adapter.HorizontalAdapter)
 
 	// Test with empty prefix
-	adapter2, err := NewRedisAdapter(ctx, rdb, "", "test-channel")
+	adapter2, err := NewRedisAdapter(ctx, rdb, "", "test-channel", &metrics.NoOpMetrics{})
 	assert.NoError(t, err)
 	assert.NotNil(t, adapter2)
 	assert.Equal(t, "test-channel", adapter2.Channel)

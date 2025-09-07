@@ -11,7 +11,6 @@ import (
 	"pusher/internal/payloads"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/common/expfmt"
 )
 
@@ -23,6 +22,7 @@ type PrometheusMetrics struct {
 	labels        map[string]string
 	customMetrics map[string]prometheus.Collector
 	customMutex   sync.RWMutex
+	registry      *prometheus.Registry
 
 	// Connection metrics
 	connectionsTotal    prometheus.Counter
@@ -74,11 +74,16 @@ type PrometheusMetrics struct {
 
 // NewPrometheusMetrics creates a new PrometheusMetrics instance
 func NewPrometheusMetrics(namespace, subsystem string) *PrometheusMetrics {
+	// Always use a custom registry to avoid duplicate registration issues
+	// This prevents conflicts when multiple instances are created in tests
+	registry := prometheus.NewRegistry()
+
 	pm := &PrometheusMetrics{
 		namespace:     namespace,
 		subsystem:     subsystem,
 		labels:        make(map[string]string),
 		customMetrics: make(map[string]prometheus.Collector),
+		registry:      registry,
 	}
 
 	// Initialize all metrics
@@ -96,48 +101,53 @@ func NewPrometheusMetricsWithLabels(namespace, subsystem string, labels map[stri
 
 func (pm *PrometheusMetrics) initializeMetrics() {
 	// Connection metrics
-	pm.connectionsTotal = promauto.NewCounter(prometheus.CounterOpts{
+	pm.connectionsTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace:   pm.namespace,
 		Subsystem:   pm.subsystem,
 		Name:        "connections_total",
 		Help:        "Total number of connections established",
 		ConstLabels: pm.labels,
 	})
+	pm.registry.MustRegister(pm.connectionsTotal)
 
-	pm.disconnectionsTotal = promauto.NewCounter(prometheus.CounterOpts{
+	pm.disconnectionsTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace:   pm.namespace,
 		Subsystem:   pm.subsystem,
 		Name:        "disconnections_total",
 		Help:        "Total number of disconnections",
 		ConstLabels: pm.labels,
 	})
+	pm.registry.MustRegister(pm.disconnectionsTotal)
 
-	pm.activeConnections = promauto.NewGauge(prometheus.GaugeOpts{
+	pm.activeConnections = prometheus.NewGauge(prometheus.GaugeOpts{
 		Namespace:   pm.namespace,
 		Subsystem:   pm.subsystem,
 		Name:        "active_connections",
 		Help:        "Current number of active connections",
 		ConstLabels: pm.labels,
 	})
+	pm.registry.MustRegister(pm.activeConnections)
 
 	// API message metrics
-	pm.apiMessagesTotal = promauto.NewCounter(prometheus.CounterOpts{
+	pm.apiMessagesTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace:   pm.namespace,
 		Subsystem:   pm.subsystem,
 		Name:        "api_messages_total",
 		Help:        "Total number of API messages processed",
 		ConstLabels: pm.labels,
 	})
+	pm.registry.MustRegister(pm.apiMessagesTotal)
 
-	pm.apiMessagesFailed = promauto.NewCounter(prometheus.CounterOpts{
+	pm.apiMessagesFailed = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace:   pm.namespace,
 		Subsystem:   pm.subsystem,
 		Name:        "api_messages_failed_total",
 		Help:        "Total number of failed API messages",
 		ConstLabels: pm.labels,
 	})
+	pm.registry.MustRegister(pm.apiMessagesFailed)
 
-	pm.apiMessageLatency = promauto.NewHistogram(prometheus.HistogramOpts{
+	pm.apiMessageLatency = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Namespace:   pm.namespace,
 		Subsystem:   pm.subsystem,
 		Name:        "api_message_duration_seconds",
@@ -145,25 +155,28 @@ func (pm *PrometheusMetrics) initializeMetrics() {
 		Buckets:     prometheus.DefBuckets,
 		ConstLabels: pm.labels,
 	})
+	pm.registry.MustRegister(pm.apiMessageLatency)
 
 	// WebSocket message metrics
-	pm.wsMessagesSentTotal = promauto.NewCounter(prometheus.CounterOpts{
+	pm.wsMessagesSentTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace:   pm.namespace,
 		Subsystem:   pm.subsystem,
 		Name:        "ws_messages_sent_total",
 		Help:        "Total number of WebSocket messages sent",
 		ConstLabels: pm.labels,
 	})
+	pm.registry.MustRegister(pm.wsMessagesSentTotal)
 
-	pm.wsMessagesReceivedTotal = promauto.NewCounter(prometheus.CounterOpts{
+	pm.wsMessagesReceivedTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace:   pm.namespace,
 		Subsystem:   pm.subsystem,
 		Name:        "ws_messages_received_total",
 		Help:        "Total number of WebSocket messages received",
 		ConstLabels: pm.labels,
 	})
+	pm.registry.MustRegister(pm.wsMessagesReceivedTotal)
 
-	pm.wsMessageLatency = promauto.NewHistogram(prometheus.HistogramOpts{
+	pm.wsMessageLatency = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Namespace:   pm.namespace,
 		Subsystem:   pm.subsystem,
 		Name:        "ws_message_duration_seconds",
@@ -171,25 +184,28 @@ func (pm *PrometheusMetrics) initializeMetrics() {
 		Buckets:     prometheus.DefBuckets,
 		ConstLabels: pm.labels,
 	})
+	pm.registry.MustRegister(pm.wsMessageLatency)
 
 	// Horizontal adapter metrics
-	pm.horizontalAdapterRequestsTotal = promauto.NewCounter(prometheus.CounterOpts{
+	pm.horizontalAdapterRequestsTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace:   pm.namespace,
 		Subsystem:   pm.subsystem,
 		Name:        "horizontal_adapter_requests_total",
 		Help:        "Total number of horizontal adapter requests sent",
 		ConstLabels: pm.labels,
 	})
+	pm.registry.MustRegister(pm.horizontalAdapterRequestsTotal)
 
-	pm.horizontalAdapterRequestsReceived = promauto.NewCounter(prometheus.CounterOpts{
+	pm.horizontalAdapterRequestsReceived = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace:   pm.namespace,
 		Subsystem:   pm.subsystem,
 		Name:        "horizontal_adapter_requests_received_total",
 		Help:        "Total number of horizontal adapter requests received",
 		ConstLabels: pm.labels,
 	})
+	pm.registry.MustRegister(pm.horizontalAdapterRequestsReceived)
 
-	pm.horizontalAdapterResolveTime = promauto.NewHistogram(prometheus.HistogramOpts{
+	pm.horizontalAdapterResolveTime = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Namespace:   pm.namespace,
 		Subsystem:   pm.subsystem,
 		Name:        "horizontal_adapter_resolve_duration_seconds",
@@ -197,100 +213,112 @@ func (pm *PrometheusMetrics) initializeMetrics() {
 		Buckets:     prometheus.DefBuckets,
 		ConstLabels: pm.labels,
 	})
+	pm.registry.MustRegister(pm.horizontalAdapterResolveTime)
 
-	pm.horizontalAdapterResolvedPromises = promauto.NewCounter(prometheus.CounterOpts{
+	pm.horizontalAdapterResolvedPromises = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace:   pm.namespace,
 		Subsystem:   pm.subsystem,
 		Name:        "horizontal_adapter_resolved_promises_total",
 		Help:        "Total number of resolved horizontal adapter promises",
 		ConstLabels: pm.labels,
 	})
+	pm.registry.MustRegister(pm.horizontalAdapterResolvedPromises)
 
-	pm.horizontalAdapterFailedPromises = promauto.NewCounter(prometheus.CounterOpts{
+	pm.horizontalAdapterFailedPromises = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace:   pm.namespace,
 		Subsystem:   pm.subsystem,
 		Name:        "horizontal_adapter_failed_promises_total",
 		Help:        "Total number of failed horizontal adapter promises",
 		ConstLabels: pm.labels,
 	})
+	pm.registry.MustRegister(pm.horizontalAdapterFailedPromises)
 
 	// Channel metrics
-	pm.channelsTotal = promauto.NewGauge(prometheus.GaugeOpts{
+	pm.channelsTotal = prometheus.NewGauge(prometheus.GaugeOpts{
 		Namespace:   pm.namespace,
 		Subsystem:   pm.subsystem,
 		Name:        "channels_total",
 		Help:        "Total number of channels",
 		ConstLabels: pm.labels,
 	})
+	pm.registry.MustRegister(pm.channelsTotal)
 
-	pm.presenceChannels = promauto.NewGauge(prometheus.GaugeOpts{
+	pm.presenceChannels = prometheus.NewGauge(prometheus.GaugeOpts{
 		Namespace:   pm.namespace,
 		Subsystem:   pm.subsystem,
 		Name:        "presence_channels_total",
 		Help:        "Total number of presence channels",
 		ConstLabels: pm.labels,
 	})
+	pm.registry.MustRegister(pm.presenceChannels)
 
-	pm.privateChannels = promauto.NewGauge(prometheus.GaugeOpts{
+	pm.privateChannels = prometheus.NewGauge(prometheus.GaugeOpts{
 		Namespace:   pm.namespace,
 		Subsystem:   pm.subsystem,
 		Name:        "private_channels_total",
 		Help:        "Total number of private channels",
 		ConstLabels: pm.labels,
 	})
+	pm.registry.MustRegister(pm.privateChannels)
 
-	pm.publicChannels = promauto.NewGauge(prometheus.GaugeOpts{
+	pm.publicChannels = prometheus.NewGauge(prometheus.GaugeOpts{
 		Namespace:   pm.namespace,
 		Subsystem:   pm.subsystem,
 		Name:        "public_channels_total",
 		Help:        "Total number of public channels",
 		ConstLabels: pm.labels,
 	})
+	pm.registry.MustRegister(pm.publicChannels)
 
 	// Event metrics
-	pm.eventsTotal = promauto.NewCounter(prometheus.CounterOpts{
+	pm.eventsTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace:   pm.namespace,
 		Subsystem:   pm.subsystem,
 		Name:        "events_total",
 		Help:        "Total number of events processed",
 		ConstLabels: pm.labels,
 	})
+	pm.registry.MustRegister(pm.eventsTotal)
 
-	pm.eventsByType = promauto.NewCounterVec(prometheus.CounterOpts{
+	pm.eventsByType = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace:   pm.namespace,
 		Subsystem:   pm.subsystem,
 		Name:        "events_by_type_total",
 		Help:        "Total number of events by type",
 		ConstLabels: pm.labels,
 	}, []string{"event_type", "app_id"})
+	pm.registry.MustRegister(pm.eventsByType)
 
-	pm.eventsByChannel = promauto.NewCounterVec(prometheus.CounterOpts{
+	pm.eventsByChannel = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace:   pm.namespace,
 		Subsystem:   pm.subsystem,
 		Name:        "events_by_channel_total",
 		Help:        "Total number of events by channel",
 		ConstLabels: pm.labels,
 	}, []string{"channel", "app_id"})
+	pm.registry.MustRegister(pm.eventsByChannel)
 
 	// Error metrics
-	pm.errorsTotal = promauto.NewCounter(prometheus.CounterOpts{
+	pm.errorsTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace:   pm.namespace,
 		Subsystem:   pm.subsystem,
 		Name:        "errors_total",
 		Help:        "Total number of errors",
 		ConstLabels: pm.labels,
 	})
+	pm.registry.MustRegister(pm.errorsTotal)
 
-	pm.errorsByType = promauto.NewCounterVec(prometheus.CounterOpts{
+	pm.errorsByType = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace:   pm.namespace,
 		Subsystem:   pm.subsystem,
 		Name:        "errors_by_type_total",
 		Help:        "Total number of errors by type",
 		ConstLabels: pm.labels,
 	}, []string{"error_type", "app_id"})
+	pm.registry.MustRegister(pm.errorsByType)
 
 	// Performance metrics
-	pm.responseTime = promauto.NewHistogram(prometheus.HistogramOpts{
+	pm.responseTime = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Namespace:   pm.namespace,
 		Subsystem:   pm.subsystem,
 		Name:        "response_duration_seconds",
@@ -298,8 +326,9 @@ func (pm *PrometheusMetrics) initializeMetrics() {
 		Buckets:     prometheus.DefBuckets,
 		ConstLabels: pm.labels,
 	})
+	pm.registry.MustRegister(pm.responseTime)
 
-	pm.requestSize = promauto.NewHistogram(prometheus.HistogramOpts{
+	pm.requestSize = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Namespace:   pm.namespace,
 		Subsystem:   pm.subsystem,
 		Name:        "request_size_bytes",
@@ -307,8 +336,9 @@ func (pm *PrometheusMetrics) initializeMetrics() {
 		Buckets:     prometheus.ExponentialBuckets(100, 10, 8),
 		ConstLabels: pm.labels,
 	})
+	pm.registry.MustRegister(pm.requestSize)
 
-	pm.responseSize = promauto.NewHistogram(prometheus.HistogramOpts{
+	pm.responseSize = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Namespace:   pm.namespace,
 		Subsystem:   pm.subsystem,
 		Name:        "response_size_bytes",
@@ -316,31 +346,35 @@ func (pm *PrometheusMetrics) initializeMetrics() {
 		Buckets:     prometheus.ExponentialBuckets(100, 10, 8),
 		ConstLabels: pm.labels,
 	})
+	pm.registry.MustRegister(pm.responseSize)
 
 	// Memory and resource metrics
-	pm.memoryUsage = promauto.NewGauge(prometheus.GaugeOpts{
+	pm.memoryUsage = prometheus.NewGauge(prometheus.GaugeOpts{
 		Namespace:   pm.namespace,
 		Subsystem:   pm.subsystem,
 		Name:        "memory_usage_bytes",
 		Help:        "Current memory usage in bytes",
 		ConstLabels: pm.labels,
 	})
+	pm.registry.MustRegister(pm.memoryUsage)
 
-	pm.cpuUsage = promauto.NewGauge(prometheus.GaugeOpts{
+	pm.cpuUsage = prometheus.NewGauge(prometheus.GaugeOpts{
 		Namespace:   pm.namespace,
 		Subsystem:   pm.subsystem,
 		Name:        "cpu_usage_percent",
 		Help:        "Current CPU usage percentage",
 		ConstLabels: pm.labels,
 	})
+	pm.registry.MustRegister(pm.cpuUsage)
 
-	pm.goroutinesTotal = promauto.NewGauge(prometheus.GaugeOpts{
+	pm.goroutinesTotal = prometheus.NewGauge(prometheus.GaugeOpts{
 		Namespace:   pm.namespace,
 		Subsystem:   pm.subsystem,
 		Name:        "goroutines_total",
 		Help:        "Current number of goroutines",
 		ConstLabels: pm.labels,
 	})
+	pm.registry.MustRegister(pm.goroutinesTotal)
 }
 
 func (pm *PrometheusMetrics) MarkNewConnection(appId constants.AppID) {
@@ -394,8 +428,8 @@ func (pm *PrometheusMetrics) MarkHorizontalAdapterRequestReceived(appId constant
 }
 
 func (pm *PrometheusMetrics) GetMetricsAsPlainText() string {
-	// Gather all metrics from the default registry
-	gatherer := prometheus.DefaultGatherer
+	// Gather all metrics from the custom registry
+	gatherer := prometheus.Gatherer(pm.registry)
 
 	// Collect all metrics
 	metricFamilies, err := gatherer.Gather()
@@ -520,4 +554,9 @@ func (pm *PrometheusMetrics) GetSubsystem() string {
 // GetLabels returns the metrics labels
 func (pm *PrometheusMetrics) GetLabels() map[string]string {
 	return pm.labels
+}
+
+// GetRegistry returns the metrics registry
+func (pm *PrometheusMetrics) GetRegistry() *prometheus.Registry {
+	return pm.registry
 }

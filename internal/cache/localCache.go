@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -15,25 +16,30 @@ type LocalCache struct {
 	mu         sync.Mutex
 }
 
-func (l *LocalCache) Init() error {
+func (l *LocalCache) Init(ctx context.Context) error {
 	l.cacheItems = make(map[string]*localCacheItem)
-	go l.cleanupJob()
+	go l.cleanupJob(ctx)
 	return nil
 }
 
-func (l *LocalCache) cleanupJob() {
+func (l *LocalCache) cleanupJob(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		l.mu.Lock()
-		now := time.Now()
-		for key, item := range l.cacheItems {
-			if item.expireAt != nil && now.After(*item.expireAt) {
-				delete(l.cacheItems, key)
+	for {
+		select {
+		case <-ctx.Done():
+			return // exit goroutine
+		case <-ticker.C:
+			l.mu.Lock()
+			now := time.Now()
+			for key, item := range l.cacheItems {
+				if item.expireAt != nil && now.After(*item.expireAt) {
+					delete(l.cacheItems, key)
+				}
 			}
+			l.mu.Unlock()
 		}
-		l.mu.Unlock()
 	}
 }
 

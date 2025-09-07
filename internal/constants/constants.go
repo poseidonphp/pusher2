@@ -52,7 +52,7 @@ const (
 
 	WriteWait      = 10 * time.Second // Time allowed to write a message to the peer.
 	MaxMessageSize = 1024             // Maximum message size allowed from peer.
-	MaxEventSizeKb = 10               // Maximum event size allowed from peer. 10KB
+	// MaxEventSizeKb = 10               // Maximum event size allowed from peer. 10KB
 )
 
 var SupportedProtocolVersions = [...]int{7}

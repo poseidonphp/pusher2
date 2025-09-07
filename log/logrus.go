@@ -1,11 +1,12 @@
 package log
 
 import (
-	"github.com/sirupsen/logrus"
 	"os"
+	"sync"
+
+	"github.com/sirupsen/logrus"
 	"pusher/env"
 	"pusher/internal/constants"
-	"sync"
 )
 
 var (

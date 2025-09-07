@@ -109,6 +109,14 @@ func CreateChannelFromString(app *apps.App, channelName constants.ChannelName) *
 // join method based on channel type (presence vs non-presence). This is the main
 // entry point for all channel subscription logic.
 func (c *Channel) Join(adapter AdapterInterface, ws *WebSocket, message payloads.SubscribePayload) *ChannelJoinResponse {
+	if adapter == nil {
+		return &ChannelJoinResponse{
+			ErrorCode: util.ErroCodeInternalServerError,
+			Message:   "No adapter provided to Join()",
+			Type:      "InternalError",
+			Success:   false,
+		}
+	}
 	// Validate authentication if required for this channel type
 	if c.RequiresAuth {
 		if !util.ValidateChannelAuth(message.Data.Auth, c.App.Secret, ws.ID, c.Name, message.Data.ChannelData) {
@@ -117,6 +125,7 @@ func (c *Channel) Join(adapter AdapterInterface, ws *WebSocket, message payloads
 				ErrorCode: util.ErrCodeSubscriptionAccessDenied,
 				Message:   "Invalid signature",
 				Type:      "AuthError",
+				Success:   false,
 			}
 		}
 	}
@@ -154,12 +163,8 @@ func (c *Channel) joinPresenceChannel(adapter AdapterInterface, ws *WebSocket, m
 		}
 	}
 
-	// Parse member data from the subscription payload
-	var member *pusherClient.MemberData
-	_ = json.Unmarshal([]byte(message.Data.ChannelData), &member)
-
 	// Validate member data size against app limits
-	if float64(len(member.UserInfo)/1024) > float64(c.App.MaxPresenceMemberSizeInKb) {
+	if float64(len(message.Data.ChannelData)/1024) > float64(c.App.MaxPresenceMemberSizeInKb) {
 		e := &ChannelJoinResponse{
 			ErrorCode: util.ErrCodeClientEventRejected,
 			Message:   fmt.Sprintf("The maximum size of the member data is %d KB", c.App.MaxPresenceMemberSizeInKb),
@@ -169,13 +174,22 @@ func (c *Channel) joinPresenceChannel(adapter AdapterInterface, ws *WebSocket, m
 		return e
 	}
 
+	// Parse member data from the subscription payload
+	var member *pusherClient.MemberData
+	_ = json.Unmarshal([]byte(message.Data.ChannelData), &member)
+
 	// Add the socket to the channel through the adapter
 	_, joinErr := adapter.AddToChannel(c.App.ID, c.Name, ws)
 	connectionCount := adapter.GetChannelSocketsCount(c.App.ID, c.Name, false)
 
 	if joinErr != nil {
-		// TODO handle error
-		log.Logger().Errorf("Error joining Channel: %s", joinErr)
+		e := &ChannelJoinResponse{
+			ErrorCode: util.ErroCodeInternalServerError,
+			Message:   fmt.Sprintf("Error joining Channel: %s", joinErr),
+			Type:      "InternalError",
+			Success:   false,
+		}
+		return e
 	}
 
 	// Return successful join response with member data
@@ -195,7 +209,13 @@ func (c *Channel) joinNonPresenceChannel(adapter AdapterInterface, ws *WebSocket
 	// Add the socket to the channel and get the connection count
 	connections, joinErr := adapter.AddToChannel(c.App.ID, c.Name, ws)
 	if joinErr != nil {
-		log.Logger().Errorf("Error joining Channel: %s", joinErr)
+		e := &ChannelJoinResponse{
+			ErrorCode: util.ErroCodeInternalServerError,
+			Message:   fmt.Sprintf("Error joining Channel: %s", joinErr),
+			Type:      "InternalError",
+			Success:   false,
+		}
+		return e
 	}
 
 	// Return successful join response with connection count

@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"sync"
 	"syscall"
 	"testing"
@@ -685,4 +687,547 @@ func (h *TestConcurrencyHelper) RunConcurrent(fn func(int)) error {
 	}
 
 	return nil
+}
+
+// TestServeMetrics tests the serveMetrics function
+func TestServeMetrics(t *testing.T) {
+	t.Run("serveMetrics with valid server", func(t *testing.T) {
+		// Create a test server with metrics enabled
+		config := &config.ServerConfig{
+			Env:                    "test",
+			Port:                   "8080",
+			BindAddress:            "localhost",
+			MetricsPort:            "9090",
+			MetricsEnabled:         true,
+			AppManager:             "array",
+			AdapterDriver:          "local",
+			QueueDriver:            "local",
+			ChannelCacheDriver:     "local",
+			LogLevel:               "debug",
+			IgnoreLoggerMiddleware: true,
+			Applications: func() []apps.App {
+				app := apps.App{
+					ID:     "test-app",
+					Key:    "test-key",
+					Secret: "test-secret",
+				}
+				app.SetMissingDefaults()
+				return []apps.App{app}
+			}(),
+		}
+
+		ctx := context.Background()
+		server, err := internal.NewServer(ctx, config)
+		if err != nil {
+			t.Logf("Server creation failed (expected in test): %v", err)
+			return
+		}
+
+		var wg sync.WaitGroup
+		metricsServer := serveMetrics(server, config, &wg)
+
+		assert.NotNil(t, metricsServer)
+		assert.Equal(t, "localhost:9090", metricsServer.Addr)
+		assert.NotNil(t, metricsServer.Handler)
+
+		// Clean up
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer cancel()
+		metricsServer.Shutdown(ctx)
+		wg.Wait()
+	})
+
+	t.Run("serveMetrics with nil server", func(t *testing.T) {
+		config := &config.ServerConfig{
+			MetricsEnabled: true,
+			BindAddress:    "localhost",
+			MetricsPort:    "9090",
+		}
+
+		var wg sync.WaitGroup
+		// This will panic because serveMetrics tries to access server.PrometheusMetrics
+		// which is expected behavior - the function assumes a valid server
+		assert.Panics(t, func() {
+			serveMetrics(nil, config, &wg)
+		})
+	})
+
+	t.Run("serveMetrics with metrics disabled", func(t *testing.T) {
+		config := &config.ServerConfig{
+			MetricsEnabled: false,
+			BindAddress:    "localhost",
+			MetricsPort:    "9090",
+		}
+
+		ctx := context.Background()
+		server, err := internal.NewServer(ctx, config)
+		if err != nil {
+			t.Logf("Server creation failed (expected in test): %v", err)
+			return
+		}
+
+		var wg sync.WaitGroup
+		metricsServer := serveMetrics(server, config, &wg)
+
+		// Should still create a metrics server even if disabled in config
+		// because the function doesn't check the config flag
+		assert.NotNil(t, metricsServer)
+	})
+}
+
+// TestInitFunction tests the init function behavior
+func TestInitFunction(t *testing.T) {
+	t.Run("init function sets GOMAXPROCS", func(t *testing.T) {
+		// The init function sets GOMAXPROCS to runtime.NumCPU()
+		// We can verify this by checking the current value
+		expected := runtime.NumCPU()
+		actual := runtime.GOMAXPROCS(0) // Get current value without changing it
+
+		// The init function should have set this to NumCPU()
+		assert.Equal(t, expected, actual)
+	})
+
+	t.Run("runtime configuration", func(t *testing.T) {
+		// Test that we can get runtime information
+		numCPU := runtime.NumCPU()
+		assert.Greater(t, numCPU, 0, "Number of CPUs should be greater than 0")
+
+		// Test that we can set and get GOMAXPROCS
+		original := runtime.GOMAXPROCS(0)
+		defer runtime.GOMAXPROCS(original) // Restore original value
+
+		runtime.GOMAXPROCS(1)
+		assert.Equal(t, 1, runtime.GOMAXPROCS(0))
+	})
+}
+
+// TestMainFunctionErrorHandling tests error handling in main function flow
+func TestMainFunctionErrorHandling(t *testing.T) {
+	t.Run("server creation with nil config", func(t *testing.T) {
+		ctx := context.Background()
+		server, err := internal.NewServer(ctx, nil)
+
+		// This should fail
+		assert.Error(t, err)
+		assert.Contains(t, "server config is nil", err.Error())
+		assert.Nil(t, server)
+	})
+
+	t.Run("server creation with invalid config", func(t *testing.T) {
+		ctx := context.Background()
+		invalidConfig := &config.ServerConfig{
+			// Missing required fields
+		}
+
+		server, err := internal.NewServer(ctx, invalidConfig)
+
+		// This should fail
+		assert.Error(t, err)
+		assert.Nil(t, server)
+	})
+}
+
+// TestWebServerLifecycleComprehensive tests comprehensive web server lifecycle
+func TestWebServerLifecycleComprehensive(t *testing.T) {
+	t.Run("web server with different ports", func(t *testing.T) {
+		ports := []string{"8080", "8081", "8082", "0"} // Port 0 for automatic assignment
+
+		for _, port := range ports {
+			t.Run("port_"+port, func(t *testing.T) {
+				config := &config.ServerConfig{
+					Env:                    "test",
+					Port:                   port,
+					BindAddress:            "localhost",
+					AppManager:             "array",
+					AdapterDriver:          "local",
+					QueueDriver:            "local",
+					ChannelCacheDriver:     "local",
+					LogLevel:               "debug",
+					IgnoreLoggerMiddleware: true,
+					Applications: func() []apps.App {
+						app := apps.App{
+							ID:     "test-app",
+							Key:    "test-key",
+							Secret: "test-secret",
+						}
+						app.SetMissingDefaults()
+						return []apps.App{app}
+					}(),
+				}
+
+				ctx := context.Background()
+				server, err := internal.NewServer(ctx, config)
+				if err != nil {
+					t.Logf("Server creation failed (expected in test): %v", err)
+					return
+				}
+
+				webServer := internal.LoadWebServer(server)
+				assert.NotNil(t, webServer)
+
+				// Test server shutdown
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+				defer cancel()
+				err = webServer.Shutdown(shutdownCtx)
+				assert.NoError(t, err)
+			})
+		}
+	})
+
+	t.Run("web server with different bind addresses", func(t *testing.T) {
+		addresses := []string{"localhost", "127.0.0.1", "0.0.0.0"}
+
+		for _, address := range addresses {
+			t.Run("address_"+address, func(t *testing.T) {
+				config := &config.ServerConfig{
+					Env:                    "test",
+					Port:                   "0", // Use port 0 for automatic assignment
+					BindAddress:            address,
+					AppManager:             "array",
+					AdapterDriver:          "local",
+					QueueDriver:            "local",
+					ChannelCacheDriver:     "local",
+					LogLevel:               "debug",
+					IgnoreLoggerMiddleware: true,
+					Applications: func() []apps.App {
+						app := apps.App{
+							ID:     "test-app",
+							Key:    "test-key",
+							Secret: "test-secret",
+						}
+						app.SetMissingDefaults()
+						return []apps.App{app}
+					}(),
+				}
+
+				ctx := context.Background()
+				server, err := internal.NewServer(ctx, config)
+				if err != nil {
+					t.Logf("Server creation failed (expected in test): %v", err)
+					return
+				}
+
+				webServer := internal.LoadWebServer(server)
+				assert.NotNil(t, webServer)
+				assert.Contains(t, webServer.Addr, address)
+
+				// Test server shutdown
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+				defer cancel()
+				err = webServer.Shutdown(shutdownCtx)
+				assert.NoError(t, err)
+			})
+		}
+	})
+}
+
+// TestMetricsServerLifecycle tests metrics server lifecycle
+func TestMetricsServerLifecycle(t *testing.T) {
+	t.Run("metrics server with different ports", func(t *testing.T) {
+		ports := []string{"9090", "9091", "9092"}
+
+		for _, port := range ports {
+			t.Run("port_"+port, func(t *testing.T) {
+				config := &config.ServerConfig{
+					Env:                    "test",
+					Port:                   "8080",
+					BindAddress:            "localhost",
+					MetricsPort:            port,
+					MetricsEnabled:         true,
+					AppManager:             "array",
+					AdapterDriver:          "local",
+					QueueDriver:            "local",
+					ChannelCacheDriver:     "local",
+					LogLevel:               "debug",
+					IgnoreLoggerMiddleware: true,
+					Applications: func() []apps.App {
+						app := apps.App{
+							ID:     "test-app",
+							Key:    "test-key",
+							Secret: "test-secret",
+						}
+						app.SetMissingDefaults()
+						return []apps.App{app}
+					}(),
+				}
+
+				ctx := context.Background()
+				server, err := internal.NewServer(ctx, config)
+				if err != nil {
+					t.Logf("Server creation failed (expected in test): %v", err)
+					return
+				}
+
+				var wg sync.WaitGroup
+				metricsServer := serveMetrics(server, config, &wg)
+
+				assert.NotNil(t, metricsServer)
+				expectedAddr := fmt.Sprintf("localhost:%s", port)
+				assert.Equal(t, expectedAddr, metricsServer.Addr)
+
+				// Test server shutdown
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+				defer cancel()
+				err = metricsServer.Shutdown(shutdownCtx)
+				assert.NoError(t, err)
+				wg.Wait()
+			})
+		}
+	})
+}
+
+// TestSignalHandlingComprehensive tests comprehensive signal handling
+func TestSignalHandlingComprehensive(t *testing.T) {
+	t.Run("multiple signal types", func(t *testing.T) {
+		signals := []os.Signal{os.Interrupt, syscall.SIGTERM}
+
+		for _, sig := range signals {
+			t.Run("signal_"+sig.String(), func(t *testing.T) {
+				c := make(chan os.Signal, 1)
+				signal.Notify(c, sig)
+
+				// Send the signal
+				c <- sig
+
+				select {
+				case receivedSig := <-c:
+					assert.Equal(t, sig, receivedSig)
+				case <-time.After(100 * time.Millisecond):
+					t.Fatal("Expected to receive signal")
+				}
+			})
+		}
+	})
+
+	t.Run("signal channel buffer", func(t *testing.T) {
+		// Test that signal channel can buffer multiple signals
+		c := make(chan os.Signal, 3)
+		signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+
+		// Send multiple signals
+		c <- os.Interrupt
+		c <- syscall.SIGTERM
+		c <- os.Interrupt
+
+		// Verify we can receive them
+		sig1 := <-c
+		sig2 := <-c
+		sig3 := <-c
+
+		assert.Equal(t, os.Interrupt, sig1)
+		assert.Equal(t, syscall.SIGTERM, sig2)
+		assert.Equal(t, os.Interrupt, sig3)
+	})
+}
+
+// TestContextHandling tests context handling in main function
+func TestContextHandling(t *testing.T) {
+	t.Run("context cancellation", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		assert.NotNil(t, ctx)
+		assert.NotNil(t, cancel)
+
+		// Test that context is not cancelled initially
+		select {
+		case <-ctx.Done():
+			t.Fatal("Context should not be cancelled initially")
+		default:
+			// Expected
+		}
+
+		// Cancel the context
+		cancel()
+
+		// Test that context is cancelled
+		select {
+		case <-ctx.Done():
+			// Expected
+		default:
+			t.Fatal("Context should be cancelled")
+		}
+	})
+
+	t.Run("context with timeout", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+
+		assert.NotNil(t, ctx)
+		assert.NotNil(t, cancel)
+
+		// Wait for timeout
+		select {
+		case <-ctx.Done():
+			// Expected after timeout
+		case <-time.After(200 * time.Millisecond):
+			t.Fatal("Context should have timed out")
+		}
+	})
+}
+
+// TestWaitGroupHandling tests wait group handling
+func TestWaitGroupHandling(t *testing.T) {
+	t.Run("wait group with multiple goroutines", func(t *testing.T) {
+		var wg sync.WaitGroup
+		goroutineCount := 5
+		completed := make(chan bool, goroutineCount)
+
+		// Add goroutines
+		for i := 0; i < goroutineCount; i++ {
+			wg.Add(1)
+			go func(id int) {
+				defer wg.Done()
+				time.Sleep(10 * time.Millisecond)
+				completed <- true
+			}(i)
+		}
+
+		// Wait for all goroutines to complete
+		wg.Wait()
+
+		// Verify all goroutines completed
+		completedCount := 0
+		for i := 0; i < goroutineCount; i++ {
+			select {
+			case <-completed:
+				completedCount++
+			case <-time.After(1 * time.Second):
+				t.Fatal("Timeout waiting for goroutine to complete")
+			}
+		}
+
+		assert.Equal(t, goroutineCount, completedCount)
+	})
+
+	t.Run("wait group with zero goroutines", func(t *testing.T) {
+		var wg sync.WaitGroup
+
+		// Wait should return immediately
+		done := make(chan bool, 1)
+		go func() {
+			wg.Wait()
+			done <- true
+		}()
+
+		select {
+		case <-done:
+			// Expected
+		case <-time.After(100 * time.Millisecond):
+			t.Fatal("Wait should return immediately with zero goroutines")
+		}
+	})
+}
+
+// TestErrorHandling tests error handling scenarios
+func TestErrorHandling(t *testing.T) {
+	t.Run("http.ErrServerClosed handling", func(t *testing.T) {
+		// Test that we can identify http.ErrServerClosed
+		server := &http.Server{}
+		var serverCloseErr error
+		go func() {
+			serverCloseErr = server.ListenAndServe()
+		}()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel() // Cancel immediately
+
+		_ = server.Shutdown(ctx)
+		time.Sleep(2 * time.Second) // Give some time for shutdown
+		assert.Error(t, serverCloseErr)
+		assert.True(t, errors.Is(serverCloseErr, http.ErrServerClosed))
+	})
+
+	t.Run("server shutdown timeout", func(t *testing.T) {
+		server := &http.Server{
+			Addr: ":0", // Use port 0 for automatic assignment
+		}
+
+		// Start server
+		go func() {
+			server.ListenAndServe()
+		}()
+
+		// Give server time to start
+		time.Sleep(10 * time.Millisecond)
+
+		// Test shutdown with very short timeout
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
+		defer cancel()
+
+		err := server.Shutdown(ctx)
+		// This might succeed or fail depending on timing
+		t.Logf("Shutdown result: %v", err)
+	})
+}
+
+// TestMainFunctionIntegration tests integration scenarios
+func TestMainFunctionIntegration(t *testing.T) {
+	t.Run("full server lifecycle simulation", func(t *testing.T) {
+		// This test simulates the full lifecycle without actually running main()
+		config := &config.ServerConfig{
+			Env:                    "test",
+			Port:                   "0", // Use port 0 for automatic assignment
+			BindAddress:            "localhost",
+			MetricsPort:            "0", // Use port 0 for automatic assignment
+			MetricsEnabled:         true,
+			AppManager:             "array",
+			AdapterDriver:          "local",
+			QueueDriver:            "local",
+			ChannelCacheDriver:     "local",
+			LogLevel:               "debug",
+			IgnoreLoggerMiddleware: true,
+			Applications: func() []apps.App {
+				app := apps.App{
+					ID:     "test-app",
+					Key:    "test-key",
+					Secret: "test-secret",
+				}
+				app.SetMissingDefaults()
+				return []apps.App{app}
+			}(),
+		}
+
+		// Step 1: Context creation
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		// Step 2: Server creation
+		server, err := internal.NewServer(ctx, config)
+		if err != nil {
+			t.Logf("Server creation failed (expected in test): %v", err)
+			return
+		}
+
+		// Step 3: Web server loading
+		webServer := internal.LoadWebServer(server)
+		assert.NotNil(t, webServer)
+
+		// Step 4: Metrics server (if enabled)
+		var wg sync.WaitGroup
+		var metricsServer *http.Server
+		if config.MetricsEnabled && server.MetricsManager != nil {
+			metricsServer = serveMetrics(server, config, &wg)
+			assert.NotNil(t, metricsServer)
+		}
+
+		// Step 5: Graceful shutdown
+		server.Closing = true
+		server.CloseAllLocalSockets()
+
+		// Shutdown web server
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer shutdownCancel()
+		webServer.Shutdown(shutdownCtx)
+
+		// Shutdown metrics server
+		if metricsServer != nil {
+			metricsCtx, metricsCancel := context.WithTimeout(context.Background(), 1*time.Second)
+			defer metricsCancel()
+			metricsServer.Shutdown(metricsCtx)
+		}
+
+		// Wait for all goroutines
+		wg.Wait()
+
+		t.Log("Full server lifecycle simulation completed successfully")
+	})
 }

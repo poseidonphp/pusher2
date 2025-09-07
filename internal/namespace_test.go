@@ -7,6 +7,7 @@ import (
 
 	"pusher/internal/apps"
 	"pusher/internal/constants"
+	"pusher/internal/metrics"
 
 	pusherClient "github.com/pusher/pusher-http-go/v5"
 	"github.com/stretchr/testify/assert"
@@ -870,7 +871,7 @@ func TestEmptyNamespaceOperations(t *testing.T) {
 
 func TestNamespaceWithLocalAdapter(t *testing.T) {
 	// Create a local adapter
-	adapter := &LocalAdapter{}
+	adapter := NewLocalAdapter(&metrics.NoOpMetrics{})
 	err := adapter.Init()
 	assert.NoError(t, err)
 

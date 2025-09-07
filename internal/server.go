@@ -3,6 +3,7 @@ package internal
 import (
 	"context"
 	"errors"
+	"os"
 	"sync"
 
 	"pusher/internal/apps"
@@ -36,6 +37,9 @@ type Server struct {
 // It initializes various components such as the adapter, app manager, metrics manager,
 // cache manager, and queue manager based on the provided configuration.
 func NewServer(ctx context.Context, conf *config.ServerConfig) (*Server, error) {
+	if conf == nil {
+		return nil, errors.New("server config is nil")
+	}
 	s := &Server{
 		ctx:    ctx,
 		config: conf,
@@ -77,9 +81,16 @@ func NewServer(ctx context.Context, conf *config.ServerConfig) (*Server, error) 
 	// 	}
 	// }
 
+	awsRegion := os.Getenv("AWS_REGION")
+
+	snsHook, snsErr := webhooks.NewSnsWebhook(awsRegion)
+	if snsErr != nil {
+		return nil, snsErr
+	}
+
 	webhookSender := &webhooks.WebhookSender{
 		HttpSender: &webhooks.HttpWebhook{},
-		SNSSender:  &webhooks.SnsWebhook{},
+		SNSSender:  snsHook,
 	}
 
 	queueManager, err := loadQueueManager(ctx, conf, webhookSender)
@@ -206,7 +217,7 @@ func loadQueueManager(ctx context.Context, conf *config.ServerConfig, webhookSen
 	return queueManager, nil
 }
 
-func loadCacheManager(_ context.Context, conf *config.ServerConfig) (cache.CacheContract, error) {
+func loadCacheManager(ctx context.Context, conf *config.ServerConfig) (cache.CacheContract, error) {
 	var cacheManager cache.CacheContract
 	var err error
 
@@ -223,7 +234,7 @@ func loadCacheManager(_ context.Context, conf *config.ServerConfig) (cache.Cache
 		cacheManager = &cache.LocalCache{}
 	}
 
-	err = cacheManager.Init()
+	err = cacheManager.Init(ctx)
 	if err != nil {
 		return nil, err
 	}

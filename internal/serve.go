@@ -10,6 +10,7 @@ import (
 
 	"time"
 
+	"pusher/internal/apps"
 	"pusher/internal/constants"
 	"pusher/internal/payloads"
 	"pusher/internal/util"
@@ -77,7 +78,7 @@ func LoadWebServer(server *Server) *http.Server {
 		version := c.Query("version")
 		protocol := c.Query("protocol")
 
-		ServeWs(server, c.Writer, c.Request, appKey, client, version, protocol)
+		serveWs(server, c.Writer, c.Request, appKey, client, version, protocol)
 	})
 
 	// Health check endpoint
@@ -92,12 +93,12 @@ func LoadWebServer(server *Server) *http.Server {
 	return webServer
 }
 
-// ServeWs handles websocket requests from the peer
+// serveWs handles websocket requests from the peer
 // It upgrades the HTTP connection to a WebSocket, performs necessary validations,
 // and initializes a WebSocket instance to manage the connection.
 //
 // When it's done, it adds the socket to the server's adapter and starts listening for messages.
-func ServeWs(server *Server, w http.ResponseWriter, r *http.Request, appKey, client, version, protocolStr string) {
+func serveWs(server *Server, w http.ResponseWriter, r *http.Request, appKey, client, version, protocolStr string) {
 	if server.Closing {
 		log.Logger().Error("Server is not accepting connections")
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -108,7 +109,7 @@ func ServeWs(server *Server, w http.ResponseWriter, r *http.Request, appKey, cli
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Logger().Error(err)
+		log.Logger().Errorf("error upgrading client: %s", err.Error())
 		return
 	}
 
@@ -117,54 +118,107 @@ func ServeWs(server *Server, w http.ResponseWriter, r *http.Request, appKey, cli
 		closeConnectionWithError(conn, util.ErrCodeUnsupportedProtocolVersion, "unsupported protocol version")
 		return
 	}
+
 	socketID := util.GenerateSocketID()
 	log.Logger().Tracef("New socket id: %s\n", socketID)
 
 	// Check for valid app
+	app, err := validateApp(server, appKey)
+	if err != nil {
+		closeConnectionWithError(conn, err.(util.ErrorCode), err.Error())
+		return
+	}
+
+	// Check connection limits
+	if err := validateConnectionLimits(server, app); err != nil {
+		closeConnectionWithError(conn, err.(util.ErrorCode), err.Error())
+		return
+	}
+
+	// Create and initialize WebSocket
+	ws := createWebSocket(socketID, conn, server, app)
+
+	// Add socket to adapter
+	if err := addSocketToAdapter(server, app, ws); err != nil {
+		closeConnectionWithError(conn, err.(util.ErrorCode), err.Error())
+		return
+	}
+
+	// Initialize WebSocket connection
+	initializeWebSocketConnection(ws, server, app)
+}
+
+// validateApp checks if the app exists and is enabled
+func validateApp(server *Server, appKey string) (*apps.App, error) {
 	app, err := server.AppManager.FindByKey(appKey)
 	if err != nil {
 		log.Logger().Error("app not found: ", appKey)
-		closeConnectionWithError(conn, util.ErrCodeAppNotExist, "app not found")
-		return
+		return nil, util.ErrCodeAppNotExist
 	}
 
 	if !app.Enabled {
 		log.Logger().Error("app is disabled: ", appKey)
-		closeConnectionWithError(conn, util.ErrCodeAppDisabled, "app is disabled")
-		return
+		return nil, util.ErrCodeAppDisabled
 	}
 
-	ws := &WebSocket{
-		ID:   socketID,
-		conn: conn,
-		// done:               make(chan struct{}),
+	return app, nil
+}
+
+// validateConnectionLimits checks if the connection limits are respected
+func validateConnectionLimits(server *Server, app *apps.App) error {
+	socketCount := server.Adapter.GetSocketsCount(app.ID, false)
+
+	if app.MaxConnections > -1 && socketCount+1 > app.MaxConnections {
+		log.Logger().Infof("max connections exceeded for app: %s", app.ID)
+		return util.ErrCodeOverQuota
+	}
+
+	return nil
+}
+
+// createWebSocket creates a new WebSocket instance
+func createWebSocket(socketID constants.SocketID, conn *websocket.Conn, server *Server, app *apps.App) *WebSocket {
+	if conn == nil {
+		log.Logger().Error("connection is nil")
+		return nil
+	}
+
+	if server == nil {
+		log.Logger().Error("server is nil")
+		return nil
+	}
+
+	if app == nil {
+		log.Logger().Error("app is nil")
+		return nil
+	}
+
+	return &WebSocket{
+		ID:                 socketID,
+		conn:               conn,
 		closed:             false,
 		server:             server,
 		app:                app,
 		SubscribedChannels: make(map[constants.ChannelName]*Channel),
 		PresenceData:       make(map[constants.ChannelName]*pusherClient.MemberData),
 	}
+}
 
-	// perform app specific checks like max connections, app is enabled, etc.
-
-	socketCount := server.Adapter.GetSocketsCount(app.ID, false)
-
-	if app.MaxConnections > -1 && socketCount+1 > app.MaxConnections {
-		log.Logger().Infof("max connections exceeded for app: %s", app.ID)
-		closeConnectionWithError(conn, util.ErrCodeOverQuota, "maximum number of connections has been reached")
-		return
-	}
-
-	err = server.Adapter.AddSocket(app.ID, ws)
+// addSocketToAdapter adds the socket to the server's adapter
+func addSocketToAdapter(server *Server, app *apps.App, ws *WebSocket) error {
+	err := server.Adapter.AddSocket(app.ID, ws)
 	if err != nil {
 		log.Logger().Errorf("failed to add socket: %s, %s ", ws.ID, err.Error())
-		closeConnectionWithError(conn, util.ErrCodeOverQuota, "internal error while adding socket")
-		return
+		return util.ErrCodeOverQuota
 	}
+	return nil
+}
 
+// initializeWebSocketConnection initializes the WebSocket connection
+func initializeWebSocketConnection(ws *WebSocket, server *Server, app *apps.App) {
 	// broadcast the pusher:connection_established
 	go ws.Listen()
-	ws.Send(payloads.EstablishPack(socketID, app.ActivityTimeout))
+	ws.Send(payloads.EstablishPack(ws.ID, app.ActivityTimeout))
 
 	if app.RequireChannelAuthorization {
 		// if require_channel_authorization is set to true for the app, set a timeout for the authorization to happen

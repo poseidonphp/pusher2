@@ -17,5 +17,4 @@ type Webhook struct {
 		ClientOptions string // replace later with lambda types client configuration
 	}
 	SNSTopicARN string
-	SNSRegion   string
 }
