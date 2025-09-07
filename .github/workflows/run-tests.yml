@@ -1,8 +1,13 @@
 name: Run Go Tests on PR to main
 
 on:
+  push:
+    branches:
+      - main
   pull_request:
-    branches: [main]
+    branches:
+      - main
+
 
 jobs:
   test:
@@ -13,8 +18,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.24.2'
       - name: Install dependencies
         run: go mod download
       - name: Run tests
-        run: go test ./...
+        run: go test -v ./...
