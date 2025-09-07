@@ -1,8 +1,13 @@
 name: Run Go Tests on PR to main
 
 on:
+  push:
+    branches:
+      - main
   pull_request:
-    branches: [main]
+    branches:
+      - main
+
 
 jobs:
   test:
