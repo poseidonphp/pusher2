@@ -831,6 +831,7 @@ func TestHorizontalAdapter_Concurrency(t *testing.T) {
 			<-done
 		}
 
+		time.Sleep(500 * time.Millisecond) // Give some time for all broadcasts to be registered
 		// Should have 10 broadcast calls
 		assert.Len(t, mockInterface.GetBroadcastCalls(), 10)
 	})
