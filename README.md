@@ -1,3 +1,5 @@
+[![codecov](https://codecov.io/gh/poseidonphp/pusher2/graph/badge.svg?token=DHCDS0CYOG)](https://codecov.io/gh/poseidonphp/pusher2)
+
 # Socket Rush - Realtime WebSocket Server
 
 Socket Rush is a scalable, multi-node WebSocket server with support for presence channels, private channels, and encrypted channels. It's designed to be flexible and configurable through various methods.

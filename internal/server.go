@@ -3,8 +3,13 @@ package internal
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
 	"os"
+	"os/signal"
 	"sync"
+	"syscall"
+	"time"
 
 	"pusher/internal/apps"
 	"pusher/internal/cache"
@@ -119,9 +124,88 @@ func NewServer(ctx context.Context, conf *config.ServerConfig) (*Server, error) 
 	return s, nil
 }
 
+// Run starts the server and web server, handling configuration and errors.
+func Run(parentCtx context.Context) error {
+	if parentCtx == nil {
+		return errors.New("parent context is nil")
+	}
+	ctx, cancel := context.WithCancel(parentCtx)
+	// Bootstrap the application by reading command line flags, environment variables, and config files
+	// to build the server configuration.
+	serverConfig, err := config.InitializeServerConfig(&ctx)
+	if err != nil {
+		cancel()
+		return errors.New("failed to load config: " + err.Error())
+	}
+
+	log.Logger().Infoln("Booting pusher server")
+
+	// Create the server instance
+	server, serverErr := NewServer(ctx, serverConfig)
+	if serverErr != nil {
+		cancel()
+		return errors.New("failed to create server: " + serverErr.Error())
+	}
+	if server == nil {
+		cancel()
+		return fmt.Errorf("server instance is nil")
+	}
+
+	// Ensure we handle panics gracefully when the main function exits
+	defer handlePanic(server)
+
+	// Load and start the web server to handle incoming HTTP requests
+	webServer := LoadWebServer(server)
+	if webServer == nil {
+		cancel()
+		return fmt.Errorf("web server instance is nil")
+	}
+	// Register a shutdown function to close all local sockets when the server is shutting down
+	webServer.RegisterOnShutdown(func() {
+		log.Logger().Infoln("... closing all local sockets")
+
+		server.Closing = true
+		server.CloseAllLocalSockets()
+		log.Logger().Infoln("... all local sockets closed")
+
+	})
+
+	serverErrChan := make(chan error, 1)
+	sigChan := make(chan os.Signal, 1)
+	// Start the web server in a new goroutine
+	go func() {
+		if startServerErr := webServer.ListenAndServe(); startServerErr != nil && !errors.Is(http.ErrServerClosed, err) {
+			serverErrChan <- fmt.Errorf("failed to start web server: %s", startServerErr.Error())
+		}
+	}()
+
+	// If metrics are enabled in the configuration, start the metrics server
+	// in a separate goroutine. This server will expose Prometheus metrics
+	// on the specified metrics port.
+	// It will also be gracefully shut down on interrupt signals.
+	// The metrics server is optional and only started if enabled.
+	// It uses the same wait group to manage its lifecycle.
+	var metricsServer *http.Server
+	if serverConfig.MetricsEnabled && server.MetricsManager != nil {
+		metricsServer = serveMetrics(server, serverConfig)
+	}
+
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Wait for interrupt signal to gracefully shut down the server
+	select {
+	case chErr := <-serverErrChan:
+		cancel()
+		return chErr
+	case <-sigChan:
+		handleInterrupt(webServer, metricsServer, cancel)
+	}
+
+	return nil // or return error if startup fails
+}
+
 func (s *Server) CloseAllLocalSockets() {
-	// implement similar to ws-handler.ts line 231
-	log.Logger().Debug("Closing all local sockets")
+	log.Logger().Info("Closing all local sockets")
 	namespaces, err := s.Adapter.GetNamespaces()
 	if err != nil {
 		return
@@ -239,4 +323,69 @@ func loadCacheManager(ctx context.Context, conf *config.ServerConfig) (cache.Cac
 		return nil, err
 	}
 	return cacheManager, nil
+}
+
+// handlePanic recovers from panics, logs the error, attempts to close all local sockets,
+// and exits the application.
+func handlePanic(server *Server) {
+	if r := recover(); r != nil {
+		log.Logger().Error("Recovered from panic", r)
+		server.Closing = true
+		server.CloseAllLocalSockets()
+		os.Exit(1)
+	}
+}
+
+// handleInterrupt listens for OS interrupt signals (like Ctrl+C) and initiates a graceful shutdown
+func handleInterrupt(webServer *http.Server, metricsServer *http.Server, cancel context.CancelFunc) {
+	log.Logger().Infoln("Received interrupt signal, waiting for all tasks to complete...")
+
+	serverShutdownContext, ctxCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer ctxCancel()
+	// Shutdown the HTTP server
+	log.Logger().Info("Shutting down HTTP server...")
+	if err := webServer.Shutdown(serverShutdownContext); err != nil {
+		log.Logger().Errorf("HTTP server shutdown error: %v", err)
+	} else {
+		log.Logger().Info("HTTP server shut down gracefully")
+	}
+
+	// Shutdown the metrics server (if it was started)
+	if metricsServer != nil {
+		log.Logger().Info("Shutting down Metrics server...")
+		if err := metricsServer.Shutdown(serverShutdownContext); err != nil {
+			log.Logger().Errorf("Metrics server shutdown error: %v", err)
+		}
+	}
+
+	// Cancel the context to signal all goroutines to stop
+	cancel()
+
+	// Wait a moment to allow all tasks to complete
+	// This is temporary; ideally, we would track active tasks and wait for them to finish
+	time.Sleep(5 * time.Second)
+
+	log.Logger().Info("All tasks completed, exiting")
+
+	os.Exit(0)
+}
+
+func serveMetrics(server *Server, serverConfig *config.ServerConfig) *http.Server {
+	mux := http.NewServeMux()
+	mh := metrics.NewMetricsHandler(server.PrometheusMetrics)
+	mux.Handle("/metrics", mh.TextHandler())
+	addr := fmt.Sprintf("%s:%s", serverConfig.BindAddress, serverConfig.MetricsPort)
+	metricsServer := &http.Server{
+		Addr:    addr,
+		Handler: mux,
+	}
+
+	go func() {
+		log.Logger().Infof("Starting metrics server on %s:%s/metrics\n", serverConfig.BindAddress, serverConfig.MetricsPort)
+		if metricsErr := metricsServer.ListenAndServe(); metricsErr != nil && !errors.Is(metricsErr, http.ErrServerClosed) {
+			log.Logger().Fatalf("Failed to start metrics server: %s", metricsErr)
+		}
+		log.Logger().Infoln("Metrics server stopped")
+	}()
+	return metricsServer
 }

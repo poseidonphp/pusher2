@@ -21,6 +21,19 @@ jobs:
       - name: Update Go packages
         run: go get -u ./...
 
+      - name: Tidy Go modules
+        run: go mod tidy
+
+      - name: Verify changes
+        run: |
+          if git diff --exit-code; then
+            echo "No changes to commit"
+            exit 0
+          fi
+
+      - name: Run tests
+        run: go test -v ./...
+
       - name: Set branch name
         id: vars
         run: echo "BRANCH=update-go-packages-${{ github.run_id }}" >> $GITHUB_ENV
