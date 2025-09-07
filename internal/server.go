@@ -45,6 +45,11 @@ func NewServer(ctx context.Context, conf *config.ServerConfig) (*Server, error) 
 	if conf == nil {
 		return nil, errors.New("server config is nil")
 	}
+
+	if conf.Applications == nil {
+		return nil, errors.New("ServerConfig.Applications cannot be nil")
+	}
+
 	s := &Server{
 		ctx:    ctx,
 		config: conf,
@@ -238,6 +243,10 @@ func loadAppManager(_ context.Context, conf *config.ServerConfig) (apps.AppManag
 	var appManager apps.AppManagerInterface
 	var err error
 
+	if conf == nil {
+		return nil, errors.New("server config is nil")
+	}
+
 	switch conf.AppManager {
 	case "array":
 		arr := &ArrayAppManager{}
@@ -261,6 +270,10 @@ func loadAdapter(ctx context.Context, conf *config.ServerConfig, metricsManager 
 	var adapter AdapterInterface
 	var err error
 
+	if conf == nil {
+		return nil, errors.New("server config is nil")
+	}
+
 	switch conf.AdapterDriver {
 	case "redis":
 		if conf.RedisInstance == nil {
@@ -283,6 +296,11 @@ func loadAdapter(ctx context.Context, conf *config.ServerConfig, metricsManager 
 func loadQueueManager(ctx context.Context, conf *config.ServerConfig, webhookSender *webhooks.WebhookSender) (queues.QueueInterface, error) {
 	var queueManager queues.QueueInterface
 	var err error
+
+	if conf == nil {
+		return nil, errors.New("server config is nil")
+	}
+
 	switch conf.QueueDriver {
 	case "redis":
 		if conf.RedisInstance == nil {
@@ -304,6 +322,10 @@ func loadQueueManager(ctx context.Context, conf *config.ServerConfig, webhookSen
 func loadCacheManager(ctx context.Context, conf *config.ServerConfig) (cache.CacheContract, error) {
 	var cacheManager cache.CacheContract
 	var err error
+
+	if conf == nil {
+		return nil, errors.New("server config is nil")
+	}
 
 	switch conf.ChannelCacheDriver {
 	case "redis":
