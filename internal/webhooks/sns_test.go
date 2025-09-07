@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 type SnsMockClient struct {
 	PublishedMessages []sns.PublishInput
 	PublishError      error
+	mu                sync.Mutex
 }
 
 const (
@@ -33,18 +35,26 @@ func (m *SnsMockClient) Publish(ctx context.Context, params *sns.PublishInput, o
 		return nil, errors.New("invalid topic ARN")
 	}
 
+	m.mu.Lock()
 	m.PublishedMessages = append(m.PublishedMessages, *params)
+	m.mu.Unlock()
 	return &sns.PublishOutput{
 		MessageId: aws.String("mock-message-id"),
 	}, nil
 }
 
 func (m *SnsMockClient) GetPublishedMessages() []sns.PublishInput {
-	return m.PublishedMessages
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	msgs := make([]sns.PublishInput, len(m.PublishedMessages))
+	copy(msgs, m.PublishedMessages)
+	return msgs
 }
 
 func (m *SnsMockClient) ClearMessages() {
+	m.mu.Lock()
 	m.PublishedMessages = []sns.PublishInput{}
+	m.mu.Unlock()
 }
 
 func getNewSnsWebhookForTest() *SnsWebhook {
@@ -521,7 +531,7 @@ func TestSnsWebhook_Send_Integration(t *testing.T) {
 
 		// Send multiple webhooks concurrently
 		const numGoroutines = 10
-		errors := make(chan error, numGoroutines)
+		var errs = make(chan error, numGoroutines)
 
 		for i := 0; i < numGoroutines; i++ {
 			go func(index int) {
@@ -537,13 +547,13 @@ func TestSnsWebhook_Send_Integration(t *testing.T) {
 				}
 
 				err := webhook.Send(testWebhook, testTopicArn)
-				errors <- err
+				errs <- err
 			}(i)
 		}
 
 		// Collect results
 		for i := 0; i < numGoroutines; i++ {
-			err := <-errors
+			err := <-errs
 			assert.NoError(t, err)
 		}
 
