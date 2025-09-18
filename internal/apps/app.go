@@ -69,15 +69,19 @@ type App struct {
 	// a specific user across all devices via the REST API.
 	//
 	// Note: This does not replace the need to authenticate for private and presence channels, which is still required.
-	RequireChannelAuthorization bool `mapstructure:"app_require_channel_authorization"`
-	HasClientEventWebhooks      bool `mapstructure:"app_has_client_event_webhooks"`
-	HasChannelOccupiedWebhooks  bool `mapstructure:"app_has_channel_occupied_webhooks"`
-	HasChannelVacatedWebhooks   bool `mapstructure:"app_has_channel_vacated_webhooks"`
-	HasMemberAddedWebhooks      bool `mapstructure:"app_has_member_added_webhooks"`
-	HasMemberRemovedWebhooks    bool `mapstructure:"app_has_member_removed_webhooks"`
-	HasCacheMissWebhooks        bool `mapstructure:"app_has_cache_miss_webhooks"`
-	WebhookBatchingEnabled      bool `mapstructure:"app_webhook_batching_enabled"`
-	WebhooksEnabled             bool `mapstructure:"app_webhooks_enabled"`
+	RequireChannelAuthorization bool   `mapstructure:"app_require_channel_authorization"`
+	HasClientEventWebhooks      bool   `mapstructure:"app_has_client_event_webhooks"`
+	HasChannelOccupiedWebhooks  bool   `mapstructure:"app_has_channel_occupied_webhooks"`
+	HasChannelVacatedWebhooks   bool   `mapstructure:"app_has_channel_vacated_webhooks"`
+	HasMemberAddedWebhooks      bool   `mapstructure:"app_has_member_added_webhooks"`
+	HasMemberRemovedWebhooks    bool   `mapstructure:"app_has_member_removed_webhooks"`
+	HasCacheMissWebhooks        bool   `mapstructure:"app_has_cache_miss_webhooks"`
+	WebhookBatchingEnabled      bool   `mapstructure:"app_webhook_batching_enabled"`
+	WebhooksEnabled             bool   `mapstructure:"app_webhooks_enabled"`
+	WebhookURL                  string `mapstructure:"app_webhook_url"`
+	WebhookSNSRegion            string `mapstructure:"app_webhook_sns_region"`
+	WebhookSNSTopicARN          string `mapstructure:"app_webhook_sns_topic_arn"`
+	WebhookFilterPrefix         string `mapstructure:"app_webhook_filter_prefix"`
 }
 
 func (a *App) SetMissingDefaults() {
