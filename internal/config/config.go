@@ -104,7 +104,10 @@ func initFlags() {
 	pflag.Bool("app-has-cache-miss-webhooks", false, "Default app has cache miss webhooks")
 	pflag.Bool("app-webhook-batching-enabled", false, "Default app webhook batching enabled")
 	pflag.Bool("app-webhooks-enabled", false, "Default app webhooks enabled")
-
+	pflag.String("app-webhook-url", "", "Default app webhook URL")
+	pflag.String("app-webhook-sns-region", "us-east-1", "Default app webhook SNS region")
+	pflag.String("app-webhook-sns-topic-arn", "", "Default app webhook SNS topic ARN")
+	pflag.String("app-webhook-filter-prefix", "", "Default app webhook filter prefix")
 	// Parse the flags
 	pflag.Parse()
 
@@ -200,6 +203,10 @@ func InitializeServerConfig(_ *context.Context) (*ServerConfig, error) {
 	_ = viper.BindPFlag("app_has_cache_miss_webhooks", pflag.Lookup("app-has-cache-miss-webhooks"))
 	_ = viper.BindPFlag("app_webhook_batching_enabled", pflag.Lookup("app-webhook-batching-enabled"))
 	_ = viper.BindPFlag("app_webhooks_enabled", pflag.Lookup("app-webhooks-enabled"))
+	_ = viper.BindPFlag("app_webhook_url", pflag.Lookup("app-webhook-url"))
+	_ = viper.BindPFlag("app_webhook_sns_region", pflag.Lookup("app-webhook-sns-region"))
+	_ = viper.BindPFlag("app_webhook_sns_topic_arn", pflag.Lookup("app-webhook-sns-topic-arn"))
+	_ = viper.BindPFlag("app_webhook_filter_prefix", pflag.Lookup("app-webhook-filter-prefix"))
 
 	// 6) Bind all CLI flags into Viper (highest precedence)
 	if err := viper.BindPFlags(pflag.CommandLine); err != nil {
