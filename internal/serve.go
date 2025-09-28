@@ -1,10 +1,13 @@
 package internal
 
 import (
+	"net"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
+	"github.com/gobwas/ws"
+	"github.com/gobwas/ws/wsutil"
+
 	pusherClient "github.com/pusher/pusher-http-go/v5"
 	"github.com/thoas/go-funk"
 
@@ -18,11 +21,11 @@ import (
 )
 
 // TODO: Implement origin validation
-var upgrader = websocket.Upgrader{
-	CheckOrigin:     func(r *http.Request) bool { return true },
-	ReadBufferSize:  constants.MaxMessageSize,
-	WriteBufferSize: constants.MaxMessageSize,
-}
+// var upgrader = websocket.Upgrader{
+// 	CheckOrigin:     func(r *http.Request) bool { return true },
+// 	ReadBufferSize:  constants.MaxMessageSize,
+// 	WriteBufferSize: constants.MaxMessageSize,
+// }
 
 // LoadWebServer initializes and returns an HTTP server configured with routes and middleware
 // for handling WebSocket connections and REST API requests.
@@ -73,6 +76,10 @@ func LoadWebServer(server *Server) *http.Server {
 
 	}
 	router.GET("/app/:key", func(c *gin.Context) {
+		if server.Closing {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Server is not accepting connections"})
+			return
+		}
 		appKey := c.Param("key")
 		client := c.Query("client")
 		version := c.Query("version")
@@ -107,7 +114,7 @@ func serveWs(server *Server, w http.ResponseWriter, r *http.Request, appKey, cli
 
 	protocol, _ := util.Str2Int(protocolStr)
 
-	conn, err := upgrader.Upgrade(w, r, nil)
+	conn, _, _, err := ws.UpgradeHTTP(r, w)
 	if err != nil {
 		log.Logger().Errorf("error upgrading client: %s", err.Error())
 		return
@@ -130,22 +137,22 @@ func serveWs(server *Server, w http.ResponseWriter, r *http.Request, appKey, cli
 	}
 
 	// Check connection limits
-	if err := validateConnectionLimits(server, app); err != nil {
+	if err = validateConnectionLimits(server, app); err != nil {
 		closeConnectionWithError(conn, err.(util.ErrorCode), err.Error())
 		return
 	}
 
 	// Create and initialize WebSocket
-	ws := createWebSocket(socketID, conn, server, app)
+	clientWebSocket := createWebSocket(socketID, conn, server, app)
 
 	// Add socket to adapter
-	if err := addSocketToAdapter(server, app, ws); err != nil {
+	if err = addSocketToAdapter(server, app, clientWebSocket); err != nil {
 		closeConnectionWithError(conn, err.(util.ErrorCode), err.Error())
 		return
 	}
 
 	// Initialize WebSocket connection
-	initializeWebSocketConnection(ws, server, app)
+	initializeWebSocketConnection(clientWebSocket, server, app)
 }
 
 // validateApp checks if the app exists and is enabled
@@ -177,7 +184,8 @@ func validateConnectionLimits(server *Server, app *apps.App) error {
 }
 
 // createWebSocket creates a new WebSocket instance
-func createWebSocket(socketID constants.SocketID, conn *websocket.Conn, server *Server, app *apps.App) *WebSocket {
+// func createWebSocket(socketID constants.SocketID, conn *websocket.Conn, server *Server, app *apps.App) *WebSocket {
+func createWebSocket(socketID constants.SocketID, conn net.Conn, server *Server, app *apps.App) *WebSocket {
 	if conn == nil {
 		log.Logger().Error("connection is nil")
 		return nil
@@ -201,6 +209,8 @@ func createWebSocket(socketID constants.SocketID, conn *websocket.Conn, server *
 		app:                app,
 		SubscribedChannels: make(map[constants.ChannelName]*Channel),
 		PresenceData:       make(map[constants.ChannelName]*pusherClient.MemberData),
+		connReader:         wsutil.NewReader(conn, ws.StateServerSide),
+		connWriter:         wsutil.NewWriter(conn, ws.StateServerSide, ws.OpText),
 	}
 }
 
@@ -231,8 +241,8 @@ func initializeWebSocketConnection(ws *WebSocket, server *Server, app *apps.App)
 }
 
 // closeConnectionWithError closes the connection with an error message
-func closeConnectionWithError(conn *websocket.Conn, errorCode util.ErrorCode, message string) {
+func closeConnectionWithError(conn net.Conn, errorCode util.ErrorCode, message string) {
 	_ = conn.SetWriteDeadline(time.Now().Add(time.Second))
-	_ = conn.WriteMessage(websocket.TextMessage, payloads.ErrorPack(errorCode, message))
+	_ = wsutil.WriteServerMessage(conn, ws.OpText, payloads.ErrorPack(errorCode, message))
 	_ = conn.Close()
 }

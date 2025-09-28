@@ -165,15 +165,6 @@ func Run(parentCtx context.Context) error {
 		cancel()
 		return fmt.Errorf("web server instance is nil")
 	}
-	// Register a shutdown function to close all local sockets when the server is shutting down
-	webServer.RegisterOnShutdown(func() {
-		log.Logger().Infoln("... closing all local sockets")
-
-		server.Closing = true
-		server.CloseAllLocalSockets()
-		log.Logger().Infoln("... all local sockets closed")
-
-	})
 
 	serverErrChan := make(chan error, 1)
 	sigChan := make(chan os.Signal, 1)
@@ -203,7 +194,7 @@ func Run(parentCtx context.Context) error {
 		cancel()
 		return chErr
 	case <-sigChan:
-		handleInterrupt(webServer, metricsServer, cancel)
+		attemptGracefulShutdown(webServer, metricsServer, server, cancel)
 	}
 
 	return nil // or return error if startup fails
@@ -213,6 +204,7 @@ func (s *Server) CloseAllLocalSockets() {
 	log.Logger().Info("Closing all local sockets")
 	namespaces, err := s.Adapter.GetNamespaces()
 	if err != nil {
+		log.Logger().Warnf("failed to get namespaces: %s", err.Error())
 		return
 	}
 
@@ -283,7 +275,14 @@ func loadAdapter(ctx context.Context, conf *config.ServerConfig, metricsManager 
 		if err != nil {
 			return nil, err
 		}
+	case "local":
+		adapter = NewLocalAdapter(metricsManager)
+		err = adapter.Init()
+		if err != nil {
+			return nil, err
+		}
 	default:
+		log.Logger().Warnf("unknown adapter driver '%s', defaulting to 'local'", conf.AdapterDriver)
 		adapter = NewLocalAdapter(metricsManager)
 		err = adapter.Init()
 		if err != nil {
@@ -353,41 +352,97 @@ func handlePanic(server *Server) {
 	if r := recover(); r != nil {
 		log.Logger().Error("Recovered from panic", r)
 		server.Closing = true
-		server.CloseAllLocalSockets()
-		os.Exit(1)
+		attemptGracefulShutdown(nil, nil, server, func() {})
 	}
 }
 
-// handleInterrupt listens for OS interrupt signals (like Ctrl+C) and initiates a graceful shutdown
-func handleInterrupt(webServer *http.Server, metricsServer *http.Server, cancel context.CancelFunc) {
+// attemptGracefulShutdown listens for OS interrupt signals (like Ctrl+C) and initiates a graceful shutdown
+func attemptGracefulShutdown(webServer *http.Server, metricsServer *http.Server, server *Server, cancel context.CancelFunc) {
 	log.Logger().Infoln("Received interrupt signal, waiting for all tasks to complete...")
 
 	serverShutdownContext, ctxCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer ctxCancel()
+
+	var wg sync.WaitGroup
+	server.Closing = true
+
 	// Shutdown the HTTP server
-	log.Logger().Info("Shutting down HTTP server...")
-	if err := webServer.Shutdown(serverShutdownContext); err != nil {
-		log.Logger().Errorf("HTTP server shutdown error: %v", err)
-	} else {
-		log.Logger().Info("HTTP server shut down gracefully")
-	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		log.Logger().Info("Shutting down HTTP server...")
+		if err := webServer.Shutdown(serverShutdownContext); err != nil {
+			log.Logger().Errorf("HTTP server shutdown error: %v", err)
+		} else {
+			log.Logger().Info("HTTP server shut down gracefully")
+		}
+	}()
 
 	// Shutdown the metrics server (if it was started)
 	if metricsServer != nil {
-		log.Logger().Info("Shutting down Metrics server...")
-		if err := metricsServer.Shutdown(serverShutdownContext); err != nil {
-			log.Logger().Errorf("Metrics server shutdown error: %v", err)
-		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			log.Logger().Info("Shutting down Metrics server...")
+			if err := metricsServer.Shutdown(serverShutdownContext); err != nil {
+				log.Logger().Errorf("Metrics server shutdown error: %v", err)
+			} else {
+				log.Logger().Info("Metrics server shut down gracefully")
+			}
+		}()
+	}
+
+	// close all local sockets
+	socketsClosed := make(chan struct{})
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		log.Logger().Infoln("... closing all local sockets")
+
+		server.CloseAllLocalSockets()
+		log.Logger().Infoln("... all local sockets closed")
+		close(socketsClosed)
+	}()
+
+	// shut down cache manager
+	if server.CacheManager != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			server.CacheManager.Shutdown()
+		}()
+	}
+
+	if server.QueueManager != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-socketsClosed
+			log.Logger().Info("Shutting down Queue manager...")
+			queueShutdownCtx, queueCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer queueCancel()
+			server.QueueManager.Shutdown(queueShutdownCtx)
+			log.Logger().Info("Queue manager shut down")
+		}()
 	}
 
 	// Cancel the context to signal all goroutines to stop
 	cancel()
 
-	// Wait a moment to allow all tasks to complete
-	// This is temporary; ideally, we would track active tasks and wait for them to finish
-	time.Sleep(5 * time.Second)
+	// wait for all shutdown tasks to complete or timeout
+	doneChan := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(doneChan)
+	}()
 
-	log.Logger().Info("All tasks completed, exiting")
+	select {
+	case <-doneChan:
+		log.Logger().Info("All shutdown tasks completed")
+	case <-serverShutdownContext.Done():
+		log.Logger().Warn("Shutdown tasks did not complete in time")
+	}
 
 	os.Exit(0)
 }

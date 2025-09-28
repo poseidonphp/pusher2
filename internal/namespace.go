@@ -73,38 +73,73 @@ func (n *Namespace) GetPresenceChannelsWithUsersCount() map[constants.ChannelNam
 
 // CompactMaps removes empty entries from the namespace maps to free up memory.
 // This method is called periodically to clean up stale references and prevent
-// memory leaks from disconnected sockets or empty channels. It creates new maps
-// with only the active entries, helping maintain optimal memory usage.
+// memory leaks from disconnected sockets or empty channels. It creates completely
+// new maps and slices with only the active entries, helping maintain optimal memory usage.
+// This also rebuilds the underlying hash tables to shrink them if many entries were deleted.
 func (n *Namespace) CompactMaps() {
 	n.mutex.Lock()
 	defer n.mutex.Unlock()
 
-	// Create new maps with appropriate capacity
-	newChannels := make(map[constants.ChannelName][]constants.SocketID, len(n.Channels))
+	// Create new maps with conservative capacity estimates
+	// Use a smaller initial capacity to force hash table shrinking if many entries were deleted
+	activeChannels := 0
+	activeSockets := 0
+	activeUsers := 0
 
-	// Copy only non-empty channels
-	for channel, sockets := range n.Channels {
+	// Count active entries first
+	for _, sockets := range n.Channels {
 		if len(sockets) > 0 {
-			newChannels[channel] = sockets
+			activeChannels++
+		}
+	}
+	for _, socket := range n.Sockets {
+		if socket != nil {
+			activeSockets++
+		}
+	}
+	for _, socketIDs := range n.Users {
+		if len(socketIDs) > 0 {
+			activeUsers++
 		}
 	}
 
-	n.Channels = newChannels
+	// Create new maps with conservative capacity (75% of active entries to force shrinking)
+	newChannels := make(map[constants.ChannelName][]constants.SocketID, (activeChannels*3)/4)
+	newSockets := make(map[constants.SocketID]*WebSocket, (activeSockets*3)/4)
+	newUsers := make(map[string][]constants.SocketID, (activeUsers*3)/4)
 
-	// Similar process for other maps
-	// do the same for n.Sockets
-	newSockets := make(map[constants.SocketID]*WebSocket, len(n.Sockets))
+	// Copy only non-empty channels and create new slices to free old array references
+	for channel, sockets := range n.Channels {
+		if len(sockets) > 0 {
+			// Create a new slice with exact capacity to avoid holding references to old arrays
+			newSockets := make([]constants.SocketID, len(sockets))
+			copy(newSockets, sockets)
+			newChannels[channel] = newSockets
+		}
+	}
+
+	// Copy only non-nil sockets
 	for socketID, socket := range n.Sockets {
 		if socket != nil {
 			newSockets[socketID] = socket
 		}
 	}
-	n.Sockets = newSockets
-}
 
-// ============================================================================
-// PRIVATE METHODS
-// ============================================================================
+	// Copy only non-empty users and create new slices to free old array references
+	for userID, socketIDs := range n.Users {
+		if len(socketIDs) > 0 {
+			// Create a new slice with exact capacity to avoid holding references to old arrays
+			newSocketIDs := make([]constants.SocketID, len(socketIDs))
+			copy(newSocketIDs, socketIDs)
+			newUsers[userID] = newSocketIDs
+		}
+	}
+
+	// Replace the old maps with new ones (this allows garbage collection of old maps and their underlying data)
+	n.Channels = newChannels
+	n.Sockets = newSockets
+	n.Users = newUsers
+}
 
 // AddSocket adds a new WebSocket connection to the namespace.
 // It checks if the socket already exists to prevent duplicates and returns
@@ -126,27 +161,62 @@ func (n *Namespace) AddSocket(ws *WebSocket) bool {
 // This method is called when a WebSocket connection is closed or terminated.
 func (n *Namespace) RemoveSocket(wsID constants.SocketID) {
 	n.mutex.Lock()
-	var channelKeys []constants.ChannelName
-	for channel := range n.Channels {
-		channelKeys = append(channelKeys, channel)
-	}
-	n.mutex.Unlock()
+	defer n.mutex.Unlock()
 
-	// Also ensure the user is removed if this is a user socket
-	if socket, exists := n.Sockets[wsID]; exists && socket.userID != "" {
-		_ = n.RemoveUser(socket)
+	// Get the socket and check if it exists
+	socket, exists := n.Sockets[wsID]
+	if !exists {
+		return // Socket doesn't exist, nothing to clean up
 	}
 
-	n.mutex.Lock()
-	if _, ok := n.Sockets[wsID]; ok {
-		n.Sockets[wsID] = nil
-		delete(n.Sockets, wsID)
+	// Remove from sockets map first
+	n.Sockets[wsID] = nil
+	delete(n.Sockets, wsID)
+
+	// Handle user cleanup if this socket was associated with a user
+	if socket.userID != "" {
+		// Remove from user's socket list
+		if userSockets, ok := n.Users[socket.userID]; ok {
+			// Create a new slice without the websocketId to avoid keeping references to the original array
+			newSockets := make([]constants.SocketID, 0, len(userSockets)-1)
+			for _, id := range userSockets {
+				if id != wsID {
+					newSockets = append(newSockets, id)
+				}
+			}
+
+			// Replace the user's slice with the new one
+			n.Users[socket.userID] = newSockets
+
+			// If user has no more sockets, remove the user entry
+			if len(n.Users[socket.userID]) == 0 {
+				delete(n.Users, socket.userID)
+			}
+		}
 	}
-	n.mutex.Unlock()
 
 	// Remove socket from all channels
-	for _, channel := range channelKeys {
-		n.RemoveFromChannel(wsID, []constants.ChannelName{channel})
+	for channel := range n.Channels {
+		if _, ok := n.Channels[channel]; ok {
+			// Create a new slice without the websocketId to avoid keeping references to the original array
+			originalSockets := n.Channels[channel]
+			newSockets := make([]constants.SocketID, 0, len(originalSockets)-1)
+
+			for _, id := range originalSockets {
+				if id != wsID {
+					newSockets = append(newSockets, id)
+				}
+			}
+
+			// Replace the channel's slice with the new one
+			n.Channels[channel] = newSockets
+
+			// If channel is empty, delete it
+			if len(n.Channels[channel]) == 0 {
+				n.Channels[channel] = nil
+				delete(n.Channels, channel)
+			}
+		}
 	}
 }
 
@@ -173,13 +243,19 @@ func (n *Namespace) RemoveFromChannel(websocketId constants.SocketID, channels [
 	defer n.mutex.Unlock()
 	remove := func(channel constants.ChannelName) int64 {
 		if _, ok := n.Channels[channel]; ok {
-			// delete the websocketId from the Channel
-			for i, id := range n.Channels[channel] {
-				if id == websocketId {
-					n.Channels[channel] = append(n.Channels[channel][:i], n.Channels[channel][i+1:]...)
-					break
+			// Create a new slice without the websocketId to avoid keeping references to the original array
+			originalSockets := n.Channels[channel]
+			newSockets := make([]constants.SocketID, 0, len(originalSockets)-1)
+
+			for _, id := range originalSockets {
+				if id != websocketId {
+					newSockets = append(newSockets, id)
 				}
 			}
+
+			// Replace the channel's slice with the new one
+			n.Channels[channel] = newSockets
+
 			// if the Channel is empty, delete it
 			if len(n.Channels[channel]) == 0 {
 				n.Channels[channel] = nil
@@ -328,12 +404,19 @@ func (n *Namespace) RemoveUser(ws *WebSocket) error {
 	n.mutex.Lock()
 	defer n.mutex.Unlock()
 	if _, ok := n.Users[ws.userID]; ok {
-		for i, id := range n.Users[ws.userID] {
-			if id == ws.ID {
-				n.Users[ws.userID] = slices.Delete(n.Users[ws.userID], i, i+1)
-				break
+		// Create a new slice without the websocketId to avoid keeping references to the original array
+		originalSockets := n.Users[ws.userID]
+		newSockets := make([]constants.SocketID, 0, len(originalSockets)-1)
+
+		for _, id := range originalSockets {
+			if id != ws.ID {
+				newSockets = append(newSockets, id)
 			}
 		}
+
+		// Replace the user's slice with the new one
+		n.Users[ws.userID] = newSockets
+
 		if len(n.Users[ws.userID]) == 0 {
 			delete(n.Users, ws.userID)
 		}

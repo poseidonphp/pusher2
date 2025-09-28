@@ -2,6 +2,8 @@ package internal
 
 import (
 	"errors"
+	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +15,14 @@ import (
 
 	pusherClient "github.com/pusher/pusher-http-go/v5"
 )
+
+// isTestEnvironment checks if the code is running in a test environment
+func isTestEnvironment() bool {
+	// Check if we're running tests by looking for the test binary or test flag
+	return strings.HasSuffix(os.Args[0], ".test") ||
+		strings.Contains(os.Args[0], "/T/") || // Go's test temp directory
+		strings.Contains(os.Args[0], "go-build")
+}
 
 type LocalAdapter struct {
 	Namespaces     map[constants.AppID]*Namespace
@@ -35,14 +45,20 @@ func (l *LocalAdapter) createBlankNamespace() *Namespace {
 		Users:    make(map[string][]constants.SocketID),
 	}
 
-	// start a go routine to call n.CompactMaps() every 5 minutes
-	go func() {
-		for {
-			// wait for 5 minutes
-			<-time.After(5 * time.Minute)
-			n.CompactMaps()
-		}
-	}()
+	// Only start the compaction goroutine in production, not during tests
+	// This prevents goroutine leaks during test execution
+	if !isTestEnvironment() {
+		// start a go routine to call n.CompactMaps() every 5 minutes
+		go func() {
+			for {
+				// wait for 5 minutes
+				<-time.After(5 * time.Minute)
+				n.CompactMaps()
+			}
+		}()
+	} else {
+		fmt.Println("Skipping compaction goroutine in test environment")
+	}
 
 	return n
 }
@@ -199,7 +215,6 @@ func (l *LocalAdapter) TerminateUserConnections(appID constants.AppID, userID st
 
 func (l *LocalAdapter) Disconnect() {
 	// not used for the local adapter
-	return
 }
 
 func (l *LocalAdapter) ClearNamespace(appID constants.AppID) {

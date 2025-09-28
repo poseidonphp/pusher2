@@ -51,7 +51,7 @@ const (
 	WebHookCacheMiss         WebHookEvent = "cache_miss"
 
 	WriteWait      = 10 * time.Second // Time allowed to write a message to the peer.
-	MaxMessageSize = 1024             // Maximum message size allowed from peer.
+	MaxMessageSize = 20480            // Maximum message size allowed from peer.
 	// MaxEventSizeKb = 10               // Maximum event size allowed from peer. 10KB
 )
 

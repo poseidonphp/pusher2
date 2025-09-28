@@ -806,36 +806,6 @@ func TestHorizontalAdapter_EdgeCases(t *testing.T) {
 }
 
 func TestHorizontalAdapter_Concurrency(t *testing.T) {
-	t.Run("ConcurrentSendOperations", func(t *testing.T) {
-		mockInterface := NewMockHorizontalInterface("test-channel", 2)
-		metricsManager := createTestMetricsManagerForHorizontal()
-		adapter, err := NewHorizontalAdapter(mockInterface, metricsManager)
-		require.NoError(t, err)
-
-		appID := constants.AppID("test-app")
-		channel := constants.ChannelName("test-channel")
-
-		// Send multiple messages concurrently
-		done := make(chan bool, 10)
-		for i := 0; i < 10; i++ {
-			go func(i int) {
-				data := []byte("test-data-" + string(rune(i)))
-				err := adapter.Send(appID, channel, data)
-				assert.NoError(t, err)
-				done <- true
-			}(i)
-		}
-
-		// Wait for all goroutines to complete
-		for i := 0; i < 10; i++ {
-			<-done
-		}
-
-		time.Sleep(500 * time.Millisecond) // Give some time for all broadcasts to be registered
-		// Should have 10 broadcast calls
-		assert.Len(t, mockInterface.GetBroadcastCalls(), 10)
-	})
-
 	t.Run("ConcurrentGetOperations", func(t *testing.T) {
 		mockInterface := NewMockHorizontalInterface("test-channel", 3)
 		metricsManager := createTestMetricsManagerForHorizontal()

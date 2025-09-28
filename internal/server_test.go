@@ -587,21 +587,21 @@ func TestHandlePanic(t *testing.T) {
 	})
 }
 
-// TestHandleInterrupt tests the handleInterrupt function
+// TestHandleInterrupt tests the attemptGracefulShutdown function
 func TestHandleInterrupt(t *testing.T) {
 	t.Run("graceful shutdown with web server only", func(t *testing.T) {
-		// Test handleInterrupt with web server only
+		// Test attemptGracefulShutdown with web server only
 		// Note: This will call os.Exit(0) so we can't test the full flow
 		// But we can test that the function exists and can be called
 		assert.NotPanics(t, func() {
-			_ = handleInterrupt
+			_ = attemptGracefulShutdown
 		})
 	})
 
 	t.Run("graceful shutdown with both servers", func(t *testing.T) {
 		// Test that the function can be referenced
 		assert.NotPanics(t, func() {
-			_ = handleInterrupt
+			_ = attemptGracefulShutdown
 		})
 	})
 }

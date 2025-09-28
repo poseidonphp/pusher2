@@ -36,6 +36,25 @@ func (sd *SyncQueue) Init() error {
 	return nil
 }
 
+func (sd *SyncQueue) Shutdown(ctx context.Context) {
+	done := make(chan struct{})
+	go func() {
+		for {
+			if len(sd.incomingMessages) == 0 {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+		log.Logger().Info("Local dispatcher shut down gracefully")
+	case <-ctx.Done():
+		log.Logger().Warn("Local dispatcher shutdown timed out, exiting with messages still in queue")
+	}
+}
+
 func (sd *SyncQueue) addToQueue(jobData *webhooks.QueuedJobData) {
 	// put the server event in the channel
 	log.Logger().Tracef("Received event to dispatch: %s (%s)", jobData.Payload.Name, jobData.Payload.Channel)

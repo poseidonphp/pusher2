@@ -2,13 +2,14 @@ package internal
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
+	"github.com/gobwas/ws"
 	pusherClient "github.com/pusher/pusher-http-go/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -645,7 +646,7 @@ func TestServeWs_Integration(t *testing.T) {
 
 		// Create a WebSocket client
 		wsURL := "ws" + httpServer.URL[4:] + "/app/test-key"
-		conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+		conn, _, _, err := ws.DefaultDialer.Dial(context.Background(), wsURL)
 
 		// The connection might fail due to the mock setup, but we can still test the logic
 		if err != nil {
@@ -681,7 +682,7 @@ func TestServeWs_Integration(t *testing.T) {
 
 		// Create a WebSocket client
 		wsURL := "ws" + httpServer.URL[4:] + "/app/test-key"
-		conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+		conn, _, _, err := ws.DefaultDialer.Dial(context.Background(), wsURL)
 
 		// The connection might fail due to the mock setup, but we can still test the logic
 		if err != nil {
@@ -697,12 +698,9 @@ func TestServeWs_Integration(t *testing.T) {
 }
 
 // Helper function to create a mock WebSocket connection
-func createMockWebSocketConnection() (*httptest.ResponseRecorder, *websocket.Conn) {
+func createMockWebSocketConnection() (*httptest.ResponseRecorder, net.Conn) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		upgrader := websocket.Upgrader{
-			CheckOrigin: func(r *http.Request) bool { return true },
-		}
-		conn, err := upgrader.Upgrade(w, r, nil)
+		conn, _, _, err := ws.UpgradeHTTP(r, w)
 		if err != nil {
 			return
 		}
@@ -711,10 +709,10 @@ func createMockWebSocketConnection() (*httptest.ResponseRecorder, *websocket.Con
 	defer server.Close()
 
 	wsURL := "ws" + server.URL[4:]
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	conn, _, _, err := ws.DefaultDialer.Dial(context.Background(), wsURL)
 	if err != nil {
 		// Return a mock connection for testing
-		return httptest.NewRecorder(), &websocket.Conn{}
+		return httptest.NewRecorder(), nil
 	}
 
 	return httptest.NewRecorder(), conn
@@ -728,14 +726,6 @@ func createWebSocketUpgradeRequest(url string) *http.Request {
 	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
 	req.Header.Set("Sec-WebSocket-Version", "13")
 	return req
-}
-
-func TestUpgraderConfiguration(t *testing.T) {
-	t.Run("UpgraderSettings", func(t *testing.T) {
-		assert.True(t, upgrader.CheckOrigin(nil)) // Should always return true
-		assert.Equal(t, constants.MaxMessageSize, upgrader.ReadBufferSize)
-		assert.Equal(t, constants.MaxMessageSize, upgrader.WriteBufferSize)
-	})
 }
 
 func TestLoadWebServer_Routes(t *testing.T) {

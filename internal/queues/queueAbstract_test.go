@@ -62,6 +62,10 @@ func (m *MockQueueInterface) Init() error {
 	return m.initError
 }
 
+func (m *MockQueueInterface) Shutdown(context.Context) {
+	// Mock implementation - no cleanup needed
+}
+
 // Helper methods for assertions
 func (m *MockQueueInterface) GetAddToQueueCalls() []*webhooks.QueuedJobData {
 	m.mu.Lock()

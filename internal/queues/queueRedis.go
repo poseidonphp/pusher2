@@ -6,10 +6,11 @@ import (
 	"errors"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"pusher/internal/clients"
 	"pusher/internal/webhooks"
 	"pusher/log"
+
+	"github.com/redis/go-redis/v9"
 )
 
 func NewRedisQueue(ctx context.Context, conn *clients.RedisClient, prefix string, webhookSender *webhooks.WebhookSender) (*RedisQueue, error) {
@@ -40,6 +41,32 @@ func (rd *RedisQueue) Init() error {
 		return errors.New("redis client is not initialized")
 	}
 	return nil
+}
+
+func (rd *RedisQueue) Shutdown(ctx context.Context) {
+	queueName := rd.RedisClient.GetKey("webhook_queue")
+	workingQueue := queueName + "_working"
+
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Logger().Warn("Redis dispatcher shutdown timed out, exiting with jobs still in working queue")
+			return
+		case <-ticker.C:
+			lenCmd := rd.RedisClient.Client.LLen(ctx, workingQueue)
+			if err := lenCmd.Err(); err != nil {
+				log.Logger().Errorf("Error checking working queue length: %v", err)
+				continue
+			}
+			if lenCmd.Val() == 0 {
+				log.Logger().Debug("Redis dispatcher shut down gracefully, working queue is empty")
+				return
+			}
+		}
+	}
 }
 
 func (rd *RedisQueue) addToQueue(jobData *webhooks.QueuedJobData) {
