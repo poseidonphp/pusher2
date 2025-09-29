@@ -21,6 +21,9 @@ import (
 	"pusher/log"
 )
 
+// Version of the application, set at build time via -ldflags "-X 'internal.Version=x.y.z'"
+var Version string = "unknown"
+
 // type AppConfig struct {
 // 	AppID     constants.AppID
 // 	AppKey    string
@@ -56,14 +59,15 @@ func isTest() bool {
 
 func initFlags() {
 	// 1) Define flags for config-file and env-file overrides
+	pflag.BoolP("version", "v", false, "Print version information and exit")
 	pflag.String("config-file", "", "Path to the config file (orverrides CONFIG_FILE env var)")
-	pflag.String("env-file", "", "path to .env file (defaults to ./.env if present)")
+	pflag.StringP("env-file", "e", "", "path to .env file (defaults to ./.env if present)")
 
 	// 2) Define actual application flags with their defaults
 	pflag.String("app-env", "production", "Environment to run the server in (default: production)")
-	pflag.Int("port", 6001, "Port on which to run the server")
+	pflag.IntP("port", "p", 6001, "Port on which to run the server")
 	pflag.String("bind-address", "0.0.0.0", "Address on which to bind the server")
-	pflag.String("adapter-driver", "local", "Adapter driver to use")
+	pflag.StringP("adapter-driver", "a", "local", "Adapter driver to use")
 	pflag.String("queue-driver", "local", "Queue driver to use")
 	pflag.String("cache-driver", "local", "Cache driver to use")
 	pflag.String("app-manager", "array", "App manager to use")
@@ -133,6 +137,12 @@ func initFlags() {
 func InitializeServerConfig(_ *context.Context) (*ServerConfig, error) {
 	// Initialize Viper and pflag to read configuration from multiple sources
 	initFlags()
+
+	showVersion := pflag.Lookup("version").Value.String() == "true"
+	if showVersion {
+		fmt.Printf("SocketRush Version: %s\n", Version)
+		os.Exit(0)
+	}
 
 	// 3) Figure out which .env to load (if any) and load it
 	if !isTest() || os.Getenv("TEST_WITH_ENV_FILE") == "true" {

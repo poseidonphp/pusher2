@@ -106,4 +106,4 @@ jobs:
           #          goversion: "https://dl.google.com/go/go1.13.1.linux-amd64.tar.gz"
           project_path: "./cmd/"
           binary_name: "socket_rush_${{ matrix.goos }}_${{ matrix.goarch }}"
-          ldflags: "-s -w -X main.version=${{ needs.create-release.outputs.new_release_tag }}"
+          ldflags: "-s -w -X pusher/internal/config.Version=${{ needs.create-release.outputs.new_release_tag }}"

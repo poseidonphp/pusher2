@@ -162,7 +162,6 @@ func (ra *RedisAdapter) psubscribe() {
 	}()
 
 	// todo add line 68 from redis-adapter.ts?
-	// this.subClient.subscribe(this.requestChannel, this.responseChannel, onError);
 
 	go func() {
 		log.Logger().Trace("subscribe to request/response channel: ", ra.Channel)
