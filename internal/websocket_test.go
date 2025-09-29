@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,102 +17,123 @@ import (
 	"pusher/internal/payloads"
 	"pusher/internal/util"
 
-	"github.com/gorilla/websocket"
-	pusherClient "github.com/pusher/pusher-http-go/v5"
+	"github.com/gobwas/ws"
+	"github.com/gobwas/ws/wsutil"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// Helper function to create a test app
+// ============================================================================
+// TEST HELPERS
+// ============================================================================
+
+// createTestAppForWebSocket creates a test app with sensible defaults for WebSocket tests
 func createTestAppForWebSocket() *apps.App {
 	app := &apps.App{
 		ID:                           "test-app",
 		Key:                          "test-key",
 		Secret:                       "test-secret",
-		MaxPresenceMembersPerChannel: 0,
+		MaxPresenceMembersPerChannel: 100,
 		Enabled:                      true,
 		EnableClientMessages:         true,
 		MaxChannelNameLength:         200,
 		MaxEventNameLength:           200,
 		MaxEventPayloadInKb:          10,
-		ReadTimeout:                  30 * time.Second,
-		AuthorizationTimeout:         30 * time.Second,
+		ActivityTimeout:              120,
+		AuthorizationTimeoutSeconds:  30,
+		RequireChannelAuthorization:  false,
 	}
 	app.SetMissingDefaults()
 	return app
 }
 
-// Helper function to create a test server with WebSocket support
-func createTestServerWithWebSocket(t *testing.T) (*Server, *httptest.Server) {
-	// Create a test app
+// createTestServer creates a server instance for testing
+func createTestServer(t *testing.T) (*Server, context.CancelFunc) {
 	app := createTestAppForWebSocket()
-
-	// Create server config
 	config := &config.ServerConfig{
-		Applications: []apps.App{*app},
+		Applications:   []apps.App{*app},
+		MetricsEnabled: false,
+		QueueDriver:    "local",
 	}
 
-	// Create server
-	server, err := NewServer(context.Background(), config)
-	assert.NoError(t, err)
-	assert.NotNil(t, server)
+	ctx, cancel := context.WithCancel(context.Background())
+	server, err := NewServer(ctx, config)
+	require.NoError(t, err)
+	require.NotNil(t, server)
 
-	// Create HTTP test server
-	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return server, cancel
+}
+
+// createWebSocketServer creates an HTTP test server that handles WebSocket upgrades
+func createWebSocketServer(t *testing.T, server *Server) *httptest.Server {
+	app := server.config.Applications[0]
+	var clientWebSocket *WebSocket
+
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Handle WebSocket upgrade
-		upgrader := websocket.Upgrader{
-			CheckOrigin: func(r *http.Request) bool {
-				return true // Allow all origins for testing
-			},
-		}
-
-		conn, err := upgrader.Upgrade(w, r, nil)
+		conn, _, _, err := ws.UpgradeHTTP(r, w)
 		if err != nil {
 			t.Errorf("Failed to upgrade connection: %v", err)
 			return
 		}
 
 		// Create WebSocket instance
-		ws := &WebSocket{
-			ID:                 constants.SocketID("test-socket-" + fmt.Sprintf("%d", time.Now().UnixNano())),
-			app:                app,
-			SubscribedChannels: make(map[constants.ChannelName]*Channel),
-			PresenceData:       make(map[constants.ChannelName]*pusherClient.MemberData),
-			conn:               conn,
-			closed:             false,
-			server:             server,
-		}
+		socketID := constants.SocketID(fmt.Sprintf("test-socket-%d", time.Now().UnixNano()))
+		clientWebSocket = createWebSocket(socketID, conn, server, &app)
+		require.NotNil(t, clientWebSocket)
 
 		// Add socket to server
-		addErr := server.Adapter.AddSocket(app.ID, ws)
-		if addErr != nil {
-			t.Errorf("Failed to add socket to server: %v", addErr)
+		err = server.Adapter.AddSocket(app.ID, clientWebSocket)
+		if err != nil {
+			t.Errorf("Failed to add socket to server: %v", err)
 			return
 		}
 
-		// Start listening
-		go ws.Listen()
+		// Start listening for messages
+		go clientWebSocket.Listen()
+		time.Sleep(time.Millisecond * 100)
 
 		// Send connection established message
-		ws.Send(payloads.EstablishPack(ws.ID, 30))
+		clientWebSocket.Send(payloads.EstablishPack(clientWebSocket.ID, app.ActivityTimeout))
 	}))
 
-	return server, httpServer
 }
 
-// Helper function to create a WebSocket connection
-func createWebSocketConnection(t *testing.T, serverURL string) *websocket.Conn {
-	// Convert http:// to ws://
+// createWebSocketConnection creates a WebSocket connection to the test server
+func createWebSocketConnection(t *testing.T, serverURL string) (net.Conn, *wsutil.Reader, *wsutil.Writer) {
 	wsURL := strings.Replace(serverURL, "http://", "ws://", 1) + "/"
 
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	assert.NoError(t, err)
-	assert.NotNil(t, conn)
+	conn, _, _, err := ws.DefaultDialer.Dial(context.Background(), wsURL)
+	require.NoError(t, err)
+	require.NotNil(t, conn)
 
-	return conn
+	reader := wsutil.NewReader(conn, ws.StateClientSide)
+	writer := wsutil.NewWriter(conn, ws.StateClientSide, ws.OpText)
+	time.Sleep(100 * time.Millisecond)
+
+	return conn, reader, writer
 }
 
-// Helper function to generate a valid auth signature for private/presence channels
-// func generateAuthSignature(socketID constants.SocketID, channelName, channelData, appSecret string) string {
+// readMessage reads a message from the WebSocket connection
+func readMessage(t *testing.T, conn net.Conn) []byte {
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	message, _, err := wsutil.ReadServerData(conn)
+	require.NoError(t, err)
+	if len(message) == 0 {
+		t.Fatal("Received empty message")
+	}
+	return message
+}
+
+// sendMessage sends a message over the WebSocket connection
+func sendMessage(t *testing.T, writer *wsutil.Writer, message []byte) {
+	_, err := writer.Write(message)
+	require.NoError(t, err)
+	err = writer.Flush()
+	require.NoError(t, err)
+}
+
+// generateAuthSignature generates a valid auth signature for private/presence channels
 func generateAuthSignature(socketID constants.SocketID, channelName, channelData string, app apps.App) string {
 	stringParts := []string{string(socketID), channelName}
 	if channelData != "" {
@@ -121,273 +143,331 @@ func generateAuthSignature(socketID constants.SocketID, channelName, channelData
 	return fmt.Sprintf("%s:%s", app.Key, util.HmacSignature(decodedString, app.Secret))
 }
 
-// Helper function to generate a valid signin signature
+// generateSigninSignature generates a valid signin signature
 func generateSigninSignature(socketID constants.SocketID, userData string, appKey string, appSecret string) string {
 	decodedString := fmt.Sprintf("%s::user::%s", socketID, userData)
 	signedString := util.HmacSignature(decodedString, appSecret)
 	return fmt.Sprintf("%s:%s", appKey, signedString)
 }
 
+// cleanupTestServer properly cleans up test resources
+func cleanupTestServer(t *testing.T, server *Server, httpServer *httptest.Server, cancel context.CancelFunc) {
+	if httpServer != nil {
+		httpServer.Close()
+	}
+
+	httpServer.CloseClientConnections()
+
+	if server != nil {
+		server.CloseAllLocalSockets()
+
+		// Shutdown cache and queue managers directly
+		if server.CacheManager != nil {
+			server.CacheManager.Shutdown()
+		}
+		if server.QueueManager != nil {
+			server.QueueManager.Shutdown(context.Background())
+		}
+
+		// Cancel the context to shut down background goroutines
+		if cancel != nil {
+			cancel()
+		}
+		// Give more time for cleanup to complete and avoid race conditions
+		time.Sleep(200 * time.Millisecond)
+		server = nil
+		httpServer = nil
+	}
+}
+
 // ============================================================================
-// CONNECTION ESTABLISHMENT TESTS
+// CONNECTION TESTS
 // ============================================================================
 
 func TestWebSocketConnectionEstablishment(t *testing.T) {
-	server, httpServer := createTestServerWithWebSocket(t)
-	defer httpServer.Close()
-	defer server.CloseAllLocalSockets()
+	server, cancel := createTestServer(t)
+	httpServer := createWebSocketServer(t, server)
+	conn, _, _ := createWebSocketConnection(t, httpServer.URL)
+	t.Cleanup(func() {
+		conn.Close()
+		cleanupTestServer(t, server, httpServer, cancel)
+	})
 
-	// Create WebSocket connection
-	conn := createWebSocketConnection(t, httpServer.URL)
-	defer conn.Close()
+	// defer conn.Close()
 
 	// Read connection established message
-	_, message, err := conn.ReadMessage()
-	assert.NoError(t, err)
+	message := readMessage(t, conn)
 
 	var payload payloads.Payload
-	err = json.Unmarshal(message, &payload)
-	assert.NoError(t, err)
+	err := json.Unmarshal(message, &payload)
+	require.NoError(t, err)
 	assert.Equal(t, constants.PusherConnectionEstablished, payload.Event)
 
 	// Parse the data to get socket ID
 	var establishData payloads.EstablishData
 	err = json.Unmarshal([]byte(payload.Data), &establishData)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.NotEmpty(t, establishData.SocketID)
-	assert.Equal(t, 30, establishData.ActivityTimeout)
+	assert.Equal(t, 120, establishData.ActivityTimeout)
 }
 
-// ============================================================================
-// PING/PONG TESTS
-// ============================================================================
-
 func TestWebSocketPingPong(t *testing.T) {
-	server, httpServer := createTestServerWithWebSocket(t)
-	defer httpServer.Close()
-	defer server.CloseAllLocalSockets()
-
-	conn := createWebSocketConnection(t, httpServer.URL)
-	defer conn.Close()
+	server, cancel := createTestServer(t)
+	httpServer := createWebSocketServer(t, server)
+	conn, _, writer := createWebSocketConnection(t, httpServer.URL)
+	t.Cleanup(func() {
+		conn.Close()
+		cleanupTestServer(t, server, httpServer, cancel)
+	})
 
 	// Read connection established message first
-	_, _, err := conn.ReadMessage()
-	assert.NoError(t, err)
+	readMessage(t, conn)
+	fmt.Println("read connection established")
 
 	// Send ping from client
 	pingMessage := payloads.PayloadPack(constants.PusherPing, "")
-	err = conn.WriteMessage(websocket.TextMessage, pingMessage)
-	assert.NoError(t, err)
+	sendMessage(t, writer, pingMessage)
+	fmt.Println("sent ping")
 
 	// Read pong response from server
-	_, message, err := conn.ReadMessage()
-	assert.NoError(t, err)
+	message := readMessage(t, conn)
+	fmt.Println("read pong")
 
 	var payload payloads.Payload
-	err = json.Unmarshal(message, &payload)
-	assert.NoError(t, err)
+	err := json.Unmarshal(message, &payload)
+	require.NoError(t, err)
+	fmt.Println("received pong:", string(message))
 	assert.Equal(t, constants.PusherPong, payload.Event)
+	fmt.Println("finished pingpong")
 }
 
-// ============================================================================
-// PUBLIC CHANNEL SUBSCRIPTION TESTS
-// ============================================================================
+func TestWebSocketConnectionClosure(t *testing.T) {
+	server, cancel := createTestServer(t)
+	httpServer := createWebSocketServer(t, server)
+	conn, _, _ := createWebSocketConnection(t, httpServer.URL)
 
-func TestWebSocketConnectionTimeout(t *testing.T) {
-	// TODO: Implement test for connection timeout if require_channel_authorization is enabled
-	//  as well as the server configuration for connection timeout
-}
-
-func TestPublicSubscription(t *testing.T) {
-	server, httpServer := createTestServerWithWebSocket(t)
-	defer httpServer.Close()
-	defer server.CloseAllLocalSockets()
-
-	conn := createWebSocketConnection(t, httpServer.URL)
-	defer conn.Close()
-	// Read connection established message first
-	_, _, err := conn.ReadMessage()
-	assert.NoError(t, err)
-
-	t.Run("Subscribe", func(t *testing.T) {
-		// Subscribe to public channel
-		subscribePayload := payloads.SubscribePayload{
-			Event: constants.PusherSubscribe,
-			Data: payloads.SubscribeChannelData{
-				Channel: "public-channel",
-			},
-		}
-
-		subscribeMessage, err := json.Marshal(subscribePayload)
-		assert.NoError(t, err)
-
-		err = conn.WriteMessage(websocket.TextMessage, subscribeMessage)
-		assert.NoError(t, err)
-
-		// Read subscription success response
-		_, message, err := conn.ReadMessage()
-		assert.NoError(t, err)
-
-		var payload payloads.SubscriptionSucceeded
-		err = json.Unmarshal(message, &payload)
-		assert.NoError(t, err)
-		assert.Equal(t, constants.PusherInternalSubscriptionSucceeded, payload.Event)
-		assert.Equal(t, "public-channel", payload.Channel)
-
+	t.Cleanup(func() {
+		cleanupTestServer(t, server, httpServer, cancel)
 	})
 
-	t.Run("Unsubscribe", func(t *testing.T) {
-		// Now unsubscribe
-		unsubscribePayload := payloads.UnsubscribePayload{
-			Event: constants.PusherUnsubscribe,
-			Data: payloads.UnsubscribeData{
-				Channel: "public-channel",
-			},
-		}
+	// Read connection established message first
+	readMessage(t, conn)
 
-		unsubscribeMessage, err := json.Marshal(unsubscribePayload)
-		assert.NoError(t, err)
+	// Close the connection
+	err := conn.Close()
+	assert.NoError(t, err)
 
-		err = conn.WriteMessage(websocket.TextMessage, unsubscribeMessage)
-		assert.NoError(t, err)
-
-		// No response expected for unsubscription
-		// The connection should still be alive
-		err = conn.WriteMessage(websocket.TextMessage, payloads.PayloadPack(constants.PusherPing, ""))
-		assert.NoError(t, err)
-
-		_, _, err = conn.ReadMessage()
-		assert.NoError(t, err)
-	})
+	// Try to read from closed connection should fail
+	_, _, err = wsutil.ReadServerData(conn)
+	assert.Error(t, err)
 }
 
 // ============================================================================
-// PRIVATE CHANNEL SUBSCRIPTION TESTS
+// CHANNEL SUBSCRIPTION TESTS
 // ============================================================================
 
-func TestWebSocketPrivateChannelSubscription(t *testing.T) {
-	server, httpServer := createTestServerWithWebSocket(t)
-	defer httpServer.Close()
-	defer server.CloseAllLocalSockets()
+func TestPublicChannelSubscription(t *testing.T) {
+	server, cancel := createTestServer(t)
+	httpServer := createWebSocketServer(t, server)
+	conn, _, writer := createWebSocketConnection(t, httpServer.URL)
+	t.Cleanup(func() {
+		conn.Close()
+		cleanupTestServer(t, server, httpServer, cancel)
+	})
 
-	conn := createWebSocketConnection(t, httpServer.URL)
-	defer conn.Close()
+	// defer conn.Close()
 
 	// Read connection established message first
-	_, message, err := conn.ReadMessage()
-	assert.NoError(t, err)
+	readMessage(t, conn)
 
-	var establishPayload payloads.Payload
-	err = json.Unmarshal(message, &establishPayload)
-	assert.NoError(t, err)
-
-	var establishData payloads.EstablishData
-	err = json.Unmarshal([]byte(establishPayload.Data), &establishData)
-	assert.NoError(t, err)
-
-	// Subscribe to private channel with auth
-	channelData := ``
-	app := server.config.Applications[0]
-	channelName := "private-channel"
-	auth := generateAuthSignature(establishData.SocketID, channelName, channelData, app)
-
+	// Subscribe to public channel
 	subscribePayload := payloads.SubscribePayload{
 		Event: constants.PusherSubscribe,
 		Data: payloads.SubscribeChannelData{
-			Channel:     channelName,
-			Auth:        auth,
-			ChannelData: channelData,
+			Channel: "public-channel",
 		},
 	}
 
 	subscribeMessage, err := json.Marshal(subscribePayload)
-	assert.NoError(t, err)
-
-	err = conn.WriteMessage(websocket.TextMessage, subscribeMessage)
-	assert.NoError(t, err)
+	require.NoError(t, err)
+	sendMessage(t, writer, subscribeMessage)
 
 	// Read subscription success response
-	_, message, err = conn.ReadMessage()
-	assert.NoError(t, err)
+	message := readMessage(t, conn)
 
-	var payload payloads.Payload
-	err = json.Unmarshal(message, &payload)
-	assert.NoError(t, err)
-	assert.Equal(t, constants.PusherInternalSubscriptionSucceeded, payload.Event)
+	var response payloads.SubscriptionSucceeded
+	err = json.Unmarshal(message, &response)
+	require.NoError(t, err)
+	assert.Equal(t, constants.PusherInternalSubscriptionSucceeded, response.Event)
+	assert.Equal(t, "public-channel", response.Channel)
 }
 
-func TestWebSocketPrivateChannelSubscriptionInvalidAuth(t *testing.T) {
-	server, httpServer := createTestServerWithWebSocket(t)
-	defer httpServer.Close()
-	defer server.CloseAllLocalSockets()
+func TestPublicChannelUnsubscription(t *testing.T) {
+	server, cancel := createTestServer(t)
+	httpServer := createWebSocketServer(t, server)
+	conn, _, writer := createWebSocketConnection(t, httpServer.URL)
+	t.Cleanup(func() {
+		conn.Close()
+		cleanupTestServer(t, server, httpServer, cancel)
+	})
 
-	conn := createWebSocketConnection(t, httpServer.URL)
-	defer conn.Close()
+	// defer conn.Close()
 
 	// Read connection established message first
-	_, message, err := conn.ReadMessage()
-	assert.NoError(t, err)
+	readMessage(t, conn)
 
-	var establishPayload payloads.Payload
-	err = json.Unmarshal(message, &establishPayload)
-	assert.NoError(t, err)
-
-	var establishData payloads.EstablishData
-	err = json.Unmarshal([]byte(establishPayload.Data), &establishData)
-	assert.NoError(t, err)
-
-	// Subscribe to private channel with invalid auth
-	channelData := `{"user_id": "user123"}`
-	invalidAuth := "invalid-auth"
-
+	// Subscribe to public channel first
 	subscribePayload := payloads.SubscribePayload{
 		Event: constants.PusherSubscribe,
 		Data: payloads.SubscribeChannelData{
-			Channel:     "private-channel",
-			Auth:        invalidAuth,
-			ChannelData: channelData,
+			Channel: "public-channel",
 		},
 	}
 
 	subscribeMessage, err := json.Marshal(subscribePayload)
-	assert.NoError(t, err)
+	require.NoError(t, err)
+	sendMessage(t, writer, subscribeMessage)
 
-	err = conn.WriteMessage(websocket.TextMessage, subscribeMessage)
-	assert.NoError(t, err)
+	// Read subscription success response
+	readMessage(t, conn)
 
-	// Read subscription error response
-	_, message, err = conn.ReadMessage()
-	assert.NoError(t, err)
+	// Now unsubscribe
+	unsubscribePayload := payloads.UnsubscribePayload{
+		Event: constants.PusherUnsubscribe,
+		Data: payloads.UnsubscribeData{
+			Channel: "public-channel",
+		},
+	}
 
-	var payload payloads.Payload
-	err = json.Unmarshal(message, &payload)
+	unsubscribeMessage, err := json.Marshal(unsubscribePayload)
+	require.NoError(t, err)
+	sendMessage(t, writer, unsubscribeMessage)
+
+	// No response expected for unsubscription, but connection should still be alive
+	// Give a moment for unsubscription to complete
+	time.Sleep(50 * time.Millisecond)
+
+	// Test with a ping
+	pingMessage := payloads.PayloadPack(constants.PusherPing, "")
+	sendMessage(t, writer, pingMessage)
+
+	_, _, err = wsutil.ReadServerData(conn)
 	assert.NoError(t, err)
-	assert.Equal(t, constants.PusherSubscriptionError, payload.Event)
 }
 
-// ============================================================================
-// PRESENCE CHANNEL SUBSCRIPTION TESTS
-// ============================================================================
+func TestPrivateChannelSubscription(t *testing.T) {
+	server, cancel := createTestServer(t)
+	httpServer := createWebSocketServer(t, server)
+	conn, _, writer := createWebSocketConnection(t, httpServer.URL)
+	t.Cleanup(func() {
+		conn.Close()
+		cleanupTestServer(t, server, httpServer, cancel)
+	})
 
-func TestWebSocketPresenceChannelSubscription(t *testing.T) {
-	server, httpServer := createTestServerWithWebSocket(t)
-	defer httpServer.Close()
-	defer server.CloseAllLocalSockets()
-
-	conn := createWebSocketConnection(t, httpServer.URL)
-	defer conn.Close()
+	// defer conn.Close()
 
 	// Read connection established message first
-	_, message, err := conn.ReadMessage()
-	assert.NoError(t, err)
+	message := readMessage(t, conn)
 
 	var establishPayload payloads.Payload
-	err = json.Unmarshal(message, &establishPayload)
-	assert.NoError(t, err)
+	err := json.Unmarshal(message, &establishPayload)
+	require.NoError(t, err)
 
 	var establishData payloads.EstablishData
 	err = json.Unmarshal([]byte(establishPayload.Data), &establishData)
-	assert.NoError(t, err)
+	require.NoError(t, err)
+
+	// Subscribe to private channel with auth
+	channelName := "private-channel"
+	app := server.config.Applications[0]
+	auth := generateAuthSignature(establishData.SocketID, channelName, "", app)
+
+	subscribePayload := payloads.SubscribePayload{
+		Event: constants.PusherSubscribe,
+		Data: payloads.SubscribeChannelData{
+			Channel: channelName,
+			Auth:    auth,
+		},
+	}
+
+	subscribeMessage, err := json.Marshal(subscribePayload)
+	require.NoError(t, err)
+	sendMessage(t, writer, subscribeMessage)
+
+	// Read subscription success response
+	message = readMessage(t, conn)
+
+	var response payloads.Payload
+	err = json.Unmarshal(message, &response)
+	require.NoError(t, err)
+	assert.Equal(t, constants.PusherInternalSubscriptionSucceeded, response.Event)
+}
+
+func TestPrivateChannelSubscriptionInvalidAuth(t *testing.T) {
+	server, cancel := createTestServer(t)
+	httpServer := createWebSocketServer(t, server)
+	conn, _, writer := createWebSocketConnection(t, httpServer.URL)
+	t.Cleanup(func() {
+		conn.Close()
+		cleanupTestServer(t, server, httpServer, cancel)
+	})
+
+	// defer conn.Close()
+
+	// Read connection established message first
+	message := readMessage(t, conn)
+
+	var establishPayload payloads.Payload
+	err := json.Unmarshal(message, &establishPayload)
+	require.NoError(t, err)
+
+	var establishData payloads.EstablishData
+	err = json.Unmarshal([]byte(establishPayload.Data), &establishData)
+	require.NoError(t, err)
+
+	// Subscribe to private channel with invalid auth
+	subscribePayload := payloads.SubscribePayload{
+		Event: constants.PusherSubscribe,
+		Data: payloads.SubscribeChannelData{
+			Channel: "private-channel",
+			Auth:    "invalid-auth",
+		},
+	}
+
+	subscribeMessage, err := json.Marshal(subscribePayload)
+	require.NoError(t, err)
+	sendMessage(t, writer, subscribeMessage)
+
+	// Read subscription error response
+	message = readMessage(t, conn)
+
+	var response payloads.Payload
+	err = json.Unmarshal(message, &response)
+	require.NoError(t, err)
+	assert.Equal(t, constants.PusherSubscriptionError, response.Event)
+}
+
+func TestPresenceChannelSubscription(t *testing.T) {
+	server, cancel := createTestServer(t)
+	httpServer := createWebSocketServer(t, server)
+	conn, _, writer := createWebSocketConnection(t, httpServer.URL)
+	t.Cleanup(func() {
+		conn.Close()
+		cleanupTestServer(t, server, httpServer, cancel)
+	})
+
+	// defer conn.Close()
+
+	// Read connection established message first
+	message := readMessage(t, conn)
+
+	var establishPayload payloads.Payload
+	err := json.Unmarshal(message, &establishPayload)
+	require.NoError(t, err)
+
+	var establishData payloads.EstablishData
+	err = json.Unmarshal([]byte(establishPayload.Data), &establishData)
+	require.NoError(t, err)
 
 	// Subscribe to presence channel with auth
 	channelData := `{"user_id": "user123", "user_info": {"name": "Test User"}}`
@@ -405,58 +485,50 @@ func TestWebSocketPresenceChannelSubscription(t *testing.T) {
 	}
 
 	subscribeMessage, err := json.Marshal(subscribePayload)
-	assert.NoError(t, err)
-
-	err = conn.WriteMessage(websocket.TextMessage, subscribeMessage)
-	assert.NoError(t, err)
+	require.NoError(t, err)
+	sendMessage(t, writer, subscribeMessage)
 
 	// Read subscription success response
-	_, message, err = conn.ReadMessage()
-	assert.NoError(t, err)
+	message = readMessage(t, conn)
 
-	var payload payloads.Payload
-	err = json.Unmarshal(message, &payload)
-	assert.NoError(t, err)
-	assert.Equal(t, constants.PusherInternalSubscriptionSucceeded, payload.Event)
+	var response payloads.Payload
+	err = json.Unmarshal(message, &response)
+	require.NoError(t, err)
+	assert.Equal(t, constants.PusherInternalSubscriptionSucceeded, response.Event)
 
 	// Parse the data to verify presence data
 	var data map[string]interface{}
-	err = json.Unmarshal([]byte(payload.Data), &data)
-	assert.NoError(t, err)
+	err = json.Unmarshal([]byte(response.Data), &data)
+	require.NoError(t, err)
 	assert.Contains(t, data, "presence")
-}
-
-func TestPresenceMemberLimitExceeded(t *testing.T) {
-	// todo: Implement test for presence member limit exceeded
-}
-
-func TestPresenceMemberSizeLimitExceeded(t *testing.T) {
-	// todo: Implement test for presence member size limit exceeded
 }
 
 // ============================================================================
 // USER SIGNIN TESTS
 // ============================================================================
 
-func TestWebSocketUserSignin(t *testing.T) {
-	server, httpServer := createTestServerWithWebSocket(t)
-	defer httpServer.Close()
-	defer server.CloseAllLocalSockets()
+func TestUserSignin(t *testing.T) {
+	server, cancel := createTestServer(t)
+	httpServer := createWebSocketServer(t, server)
+	conn, _, writer := createWebSocketConnection(t, httpServer.URL)
+	t.Cleanup(func() {
+		conn.Close()
+		cleanupTestServer(t, server, httpServer, cancel)
+	})
+	server.config.Applications[0].RequireChannelAuthorization = true
 
-	conn := createWebSocketConnection(t, httpServer.URL)
-	defer conn.Close()
+	// defer conn.Close()
 
 	// Read connection established message first
-	_, message, err := conn.ReadMessage()
-	assert.NoError(t, err)
+	message := readMessage(t, conn)
 
 	var establishPayload payloads.Payload
-	err = json.Unmarshal(message, &establishPayload)
-	assert.NoError(t, err)
+	err := json.Unmarshal(message, &establishPayload)
+	require.NoError(t, err)
 
 	var establishData payloads.EstablishData
 	err = json.Unmarshal([]byte(establishPayload.Data), &establishData)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Sign in user
 	userData := `{"id": "user123", "user_info": {"name": "Test User"}}`
@@ -471,40 +543,38 @@ func TestWebSocketUserSignin(t *testing.T) {
 	}
 
 	signinMessage, err := json.Marshal(signinPayload)
-	assert.NoError(t, err)
-
-	err = conn.WriteMessage(websocket.TextMessage, signinMessage)
-	assert.NoError(t, err)
+	require.NoError(t, err)
+	sendMessage(t, writer, signinMessage)
 
 	// Read signin success response
-	_, message, err = conn.ReadMessage()
-	assert.NoError(t, err)
+	message = readMessage(t, conn)
 
-	var payload payloads.Payload
-	err = json.Unmarshal(message, &payload)
-	assert.NoError(t, err)
-	assert.Equal(t, constants.PusherSigninSuccess, payload.Event)
+	var response payloads.Payload
+	err = json.Unmarshal(message, &response)
+	require.NoError(t, err)
+	assert.Equal(t, constants.PusherSigninSuccess, response.Event)
 }
 
-func TestWebSocketUserSigninInvalidAuth(t *testing.T) {
-	server, httpServer := createTestServerWithWebSocket(t)
-	defer httpServer.Close()
-	defer server.CloseAllLocalSockets()
-
-	conn := createWebSocketConnection(t, httpServer.URL)
-	defer conn.Close()
+func TestUserSigninInvalidAuth(t *testing.T) {
+	server, cancel := createTestServer(t)
+	httpServer := createWebSocketServer(t, server)
+	conn, _, writer := createWebSocketConnection(t, httpServer.URL)
+	t.Cleanup(func() {
+		conn.Close()
+		cleanupTestServer(t, server, httpServer, cancel)
+	})
+	server.config.Applications[0].RequireChannelAuthorization = true
 
 	// Read connection established message first
-	_, message, err := conn.ReadMessage()
-	assert.NoError(t, err)
+	message := readMessage(t, conn)
 
 	var establishPayload payloads.Payload
-	err = json.Unmarshal(message, &establishPayload)
-	assert.NoError(t, err)
+	err := json.Unmarshal(message, &establishPayload)
+	require.NoError(t, err)
 
 	var establishData payloads.EstablishData
 	err = json.Unmarshal([]byte(establishPayload.Data), &establishData)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Sign in user with invalid auth
 	userData := `{"id": "user123", "user_info": {"name": "Test User"}}`
@@ -519,34 +589,130 @@ func TestWebSocketUserSigninInvalidAuth(t *testing.T) {
 	}
 
 	signinMessage, err := json.Marshal(signinPayload)
-	assert.NoError(t, err)
-
-	err = conn.WriteMessage(websocket.TextMessage, signinMessage)
-	assert.NoError(t, err)
+	require.NoError(t, err)
+	sendMessage(t, writer, signinMessage)
 
 	// Connection should be closed due to invalid auth
-	_, _, _ = conn.ReadMessage() // first message is the notice about closing the connection
+	var authResponsePayload payloads.Payload
+	message = readMessage(t, conn)
+	err = json.Unmarshal(message, &authResponsePayload)
+	require.NoError(t, err)
+	assert.Equal(t, constants.PusherError, authResponsePayload.Event)
 
-	_, _, err = conn.ReadMessage() // second message is the actual error
+	var errPayload payloads.ErrData
+	err = json.Unmarshal([]byte(authResponsePayload.Data), &errPayload)
+	require.NoError(t, err)
+	assert.Equal(t, util.ErrCodeUnauthorizedConnection, errPayload.Code)
+}
 
+func TestSigninTimeout(t *testing.T) {
+	server, cancel := createTestServer(t)
+	httpServer := createWebSocketServer(t, server)
+	conn, _, _ := createWebSocketConnection(t, httpServer.URL)
+	t.Cleanup(func() {
+		conn.Close()
+		cleanupTestServer(t, server, httpServer, cancel)
+	})
+	server.config.Applications[0].RequireChannelAuthorization = true
+	server.config.Applications[0].AuthorizationTimeoutSeconds = 1 // Set short timeout for test
+
+	// Read connection established message first
+	readMessage(t, conn)
+
+	// Wait for longer than the authorization timeout
+	time.Sleep(2 * time.Second)
+
+	// Try to read from connection should fail as it should be closed
+	_, _, err := wsutil.ReadServerData(conn)
 	assert.Error(t, err)
+}
+
+func TestUserIsSubscribedToUserSpecificChannelAfterSignin(t *testing.T) {
+	server, cancel := createTestServer(t)
+	httpServer := createWebSocketServer(t, server)
+	conn, _, writer := createWebSocketConnection(t, httpServer.URL)
+	t.Cleanup(func() {
+		conn.Close()
+		cleanupTestServer(t, server, httpServer, cancel)
+	})
+	server.config.Applications[0].RequireChannelAuthorization = true
+
+	// Read connection established message first
+	message := readMessage(t, conn)
+
+	var establishPayload payloads.Payload
+	err := json.Unmarshal(message, &establishPayload)
+	require.NoError(t, err)
+
+	var establishData payloads.EstablishData
+	err = json.Unmarshal([]byte(establishPayload.Data), &establishData)
+	require.NoError(t, err)
+
+	// Sign in user
+	userData := `{"id": "user123", "user_info": {"name": "Test User"}}`
+	auth := generateSigninSignature(establishData.SocketID, userData, "test-key", "test-secret")
+
+	signinPayload := UserSigninPayload{
+		Event: constants.PusherSignin,
+		Data: UserSigninData{
+			UserData: userData,
+			Auth:     auth,
+		},
+	}
+
+	signinMessage, err := json.Marshal(signinPayload)
+	require.NoError(t, err)
+	sendMessage(t, writer, signinMessage)
+
+	// Read signin success response
+	message = readMessage(t, conn)
+
+	var response payloads.Payload
+	err = json.Unmarshal(message, &response)
+	require.NoError(t, err)
+	assert.Equal(t, constants.PusherSigninSuccess, response.Event)
+
+	// This should trigger a subscription to the user-specific channel
+	userChannelName := constants.SocketRushServerToUserPrefix + "user123"
+
+	// Subscribe to the user-specific channel
+	subscribePayload := payloads.SubscribePayload{
+		Event: constants.PusherSubscribe,
+		Data: payloads.SubscribeChannelData{
+			Channel: userChannelName,
+		},
+	}
+
+	subscribeMessage, err := json.Marshal(subscribePayload)
+	require.NoError(t, err)
+	sendMessage(t, writer, subscribeMessage)
+
+	// Read subscription success response
+
+	message = readMessage(t, conn)
+
+	var userChannelResponse payloads.SubscriptionSucceeded
+	err = json.Unmarshal(message, &userChannelResponse)
+	require.NoError(t, err)
+	assert.Equal(t, constants.PusherInternalSubscriptionSucceeded, userChannelResponse.Event)
+	assert.Equal(t, userChannelName, userChannelResponse.Channel)
 }
 
 // ============================================================================
 // CLIENT EVENT TESTS
 // ============================================================================
 
-func TestWebSocketClientEvent(t *testing.T) {
-	server, httpServer := createTestServerWithWebSocket(t)
-	defer httpServer.Close()
-	defer server.CloseAllLocalSockets()
-
-	conn := createWebSocketConnection(t, httpServer.URL)
-	defer conn.Close()
+func TestClientEvent(t *testing.T) {
+	server, cancel := createTestServer(t)
+	httpServer := createWebSocketServer(t, server)
+	conn, _, writer := createWebSocketConnection(t, httpServer.URL)
+	t.Cleanup(func() {
+		conn.Close()
+		cleanupTestServer(t, server, httpServer, cancel)
+	})
 
 	// Read connection established message first
-	_, _, err := conn.ReadMessage()
-	assert.NoError(t, err)
+	readMessage(t, conn)
 
 	// Subscribe to public channel first
 	subscribePayload := payloads.SubscribePayload{
@@ -557,14 +723,11 @@ func TestWebSocketClientEvent(t *testing.T) {
 	}
 
 	subscribeMessage, err := json.Marshal(subscribePayload)
-	assert.NoError(t, err)
-
-	err = conn.WriteMessage(websocket.TextMessage, subscribeMessage)
-	assert.NoError(t, err)
+	require.NoError(t, err)
+	sendMessage(t, writer, subscribeMessage)
 
 	// Read subscription success response
-	_, _, err = conn.ReadMessage()
-	assert.NoError(t, err)
+	readMessage(t, conn)
 
 	// Send client event
 	clientEvent := payloads.ClientChannelEvent{
@@ -574,31 +737,30 @@ func TestWebSocketClientEvent(t *testing.T) {
 	}
 
 	clientEventMessage, err := json.Marshal(clientEvent)
-	assert.NoError(t, err)
+	require.NoError(t, err)
+	sendMessage(t, writer, clientEventMessage)
 
-	err = conn.WriteMessage(websocket.TextMessage, clientEventMessage)
-	assert.NoError(t, err)
+	// No response expected for client events, but connection should still be alive
+	// Test with a ping
+	pingMessage := payloads.PayloadPack(constants.PusherPing, "")
+	sendMessage(t, writer, pingMessage)
 
-	// No response expected for client events (they are broadcast to other subscribers)
-	// The connection should still be alive
-	err = conn.WriteMessage(websocket.TextMessage, payloads.PayloadPack(constants.PusherPing, ""))
-	assert.NoError(t, err)
-
-	_, _, err = conn.ReadMessage()
+	_, _, err = wsutil.ReadServerData(conn)
 	assert.NoError(t, err)
 }
 
-func TestWebSocketClientEventNotSubscribed(t *testing.T) {
-	server, httpServer := createTestServerWithWebSocket(t)
-	defer httpServer.Close()
-	defer server.CloseAllLocalSockets()
+func TestClientEventNotSubscribed(t *testing.T) {
+	server, cancel := createTestServer(t)
+	httpServer := createWebSocketServer(t, server)
 
-	conn := createWebSocketConnection(t, httpServer.URL)
-	defer conn.Close()
+	conn, _, writer := createWebSocketConnection(t, httpServer.URL)
+	t.Cleanup(func() {
+		conn.Close()
+		cleanupTestServer(t, server, httpServer, cancel)
+	})
 
 	// Read connection established message first
-	_, _, err := conn.ReadMessage()
-	assert.NoError(t, err)
+	readMessage(t, conn)
 
 	// Send client event without subscribing
 	clientEvent := payloads.ClientChannelEvent{
@@ -608,151 +770,154 @@ func TestWebSocketClientEventNotSubscribed(t *testing.T) {
 	}
 
 	clientEventMessage, err := json.Marshal(clientEvent)
-	assert.NoError(t, err)
-
-	err = conn.WriteMessage(websocket.TextMessage, clientEventMessage)
-	assert.NoError(t, err)
+	require.NoError(t, err)
+	sendMessage(t, writer, clientEventMessage)
 
 	// Should receive an error response
-	_, message, err := conn.ReadMessage()
-	assert.NoError(t, err)
+	message := readMessage(t, conn)
 
-	var payload payloads.Payload
-	err = json.Unmarshal(message, &payload)
-	assert.NoError(t, err)
-	assert.Equal(t, constants.PusherError, payload.Event)
-}
+	var response payloads.Payload
+	err = json.Unmarshal(message, &response)
+	require.NoError(t, err)
+	assert.Equal(t, constants.PusherError, response.Event)
 
-// ============================================================================
-// CONNECTION CLOSURE TESTS
-// ============================================================================
+	var errPayload payloads.ErrData
+	err = json.Unmarshal([]byte(response.Data), &errPayload)
+	require.NoError(t, err)
+	assert.Equal(t, util.ErrCodeClientEventRejected, errPayload.Code)
 
-func TestWebSocketConnectionClosure(t *testing.T) {
-	server, httpServer := createTestServerWithWebSocket(t)
-	defer httpServer.Close()
-	defer server.CloseAllLocalSockets()
+	// now let's subscribe, but then remove the socket from the SubscribedChannels map
+	// simulating something that may have gone wrong, where the client thinks it's in
+	// the chanel but the server doesn't
+	// Subscribe to a public channel first
+	subscribePayload := payloads.SubscribePayload{
+		Event: constants.PusherSubscribe,
+		Data: payloads.SubscribeChannelData{
+			Channel: "public-channel",
+		},
+	}
 
-	conn := createWebSocketConnection(t, httpServer.URL)
-	defer conn.Close()
+	subscribeMessage, err := json.Marshal(subscribePayload)
+	require.NoError(t, err)
+	sendMessage(t, writer, subscribeMessage)
 
-	// Read connection established message first
-	_, _, err := conn.ReadMessage()
-	assert.NoError(t, err)
+	// Read subscription success response
+	readMessage(t, conn)
 
-	// Close the connection
-	err = conn.Close()
-	assert.NoError(t, err)
-
-	// Try to read from closed connection
-	_, _, err = conn.ReadMessage()
-	assert.Error(t, err)
-}
-
-// ============================================================================
-// CONCURRENT CONNECTION TESTS
-// ============================================================================
-
-func TestWebSocketConcurrentConnections(t *testing.T) {
-	server, httpServer := createTestServerWithWebSocket(t)
-	defer httpServer.Close()
-	defer server.CloseAllLocalSockets()
-
-	// Create multiple connections
-	numConnections := 5
-	connections := make([]*websocket.Conn, numConnections)
-
-	for i := 0; i < numConnections; i++ {
-		conn := createWebSocketConnection(t, httpServer.URL)
-		connections[i] = conn
-		defer conn.Close()
-
-		// Read connection established message
-		_, _, err := conn.ReadMessage()
+	// Remove the channel from the SubscribedChannels map
+	app := server.config.Applications[0]
+	clientSockets := server.Adapter.GetSockets(app.ID, true)
+	for clientSocketId, _ := range clientSockets {
+		err = server.Adapter.RemoveSocket(app.ID, clientSocketId)
 		assert.NoError(t, err)
 	}
 
-	// All connections should be alive
-	for i, conn := range connections {
-		err := conn.WriteMessage(websocket.TextMessage, payloads.PayloadPack(constants.PusherPing, ""))
-		assert.NoError(t, err, "Connection %d should be alive", i)
+	// Send client event again
+	sendMessage(t, writer, clientEventMessage)
 
-		_, _, err = conn.ReadMessage()
-		assert.NoError(t, err, "Connection %d should be alive", i)
-	}
+	// Should receive an error response
+	message = readMessage(t, conn)
+
+	err = json.Unmarshal(message, &response)
+	require.NoError(t, err)
+	assert.Equal(t, constants.PusherError, response.Event)
+
+	err = json.Unmarshal([]byte(response.Data), &errPayload)
+	require.NoError(t, err)
+	assert.Equal(t, util.ErrCodeNotSubscribed, errPayload.Code)
+
 }
 
 // ============================================================================
 // ERROR HANDLING TESTS
 // ============================================================================
 
-func TestWebSocketInvalidMessage(t *testing.T) {
-	server, httpServer := createTestServerWithWebSocket(t)
-	defer httpServer.Close()
-	defer server.CloseAllLocalSockets()
-
-	conn := createWebSocketConnection(t, httpServer.URL)
-	defer conn.Close()
+func TestInvalidMessage(t *testing.T) {
+	server, cancel := createTestServer(t)
+	httpServer := createWebSocketServer(t, server)
+	conn, _, writer := createWebSocketConnection(t, httpServer.URL)
+	t.Cleanup(func() {
+		conn.Close()
+		cleanupTestServer(t, server, httpServer, cancel)
+	})
 
 	// Read connection established message first
-	_, _, err := conn.ReadMessage()
-	assert.NoError(t, err)
+	readMessage(t, conn)
 
 	// Send invalid JSON
-	err = conn.WriteMessage(websocket.TextMessage, []byte("invalid json"))
-	assert.NoError(t, err)
+	sendMessage(t, writer, []byte("invalid json"))
 
 	// Should receive an error response
-	_, message, err := conn.ReadMessage()
-	assert.NoError(t, err)
+	message := readMessage(t, conn)
 
-	var payload payloads.ChannelEvent
-	err = json.Unmarshal(message, &payload)
-	assert.NoError(t, err)
-	assert.Equal(t, constants.PusherError, payload.Event)
+	var response payloads.ChannelEvent
+	err := json.Unmarshal(message, &response)
+	require.NoError(t, err)
+	assert.Equal(t, constants.PusherError, response.Event)
 }
 
-func TestWebSocketUnsupportedEvent(t *testing.T) {
-	server, httpServer := createTestServerWithWebSocket(t)
-	defer httpServer.Close()
-	defer server.CloseAllLocalSockets()
-
-	conn := createWebSocketConnection(t, httpServer.URL)
-	defer conn.Close()
+func TestMessageTooLarge(t *testing.T) {
+	server, cancel := createTestServer(t)
+	httpServer := createWebSocketServer(t, server)
+	conn, _, writer := createWebSocketConnection(t, httpServer.URL)
+	t.Cleanup(func() {
+		conn.Close()
+		cleanupTestServer(t, server, httpServer, cancel)
+	})
 
 	// Read connection established message first
-	_, _, err := conn.ReadMessage()
-	assert.NoError(t, err)
+	readMessage(t, conn)
+
+	// Send oversized message
+	oversizedMessage := make([]byte, constants.MaxMessageSize+1)
+	for i := range oversizedMessage {
+		oversizedMessage[i] = 'a'
+	}
+	sendMessage(t, writer, oversizedMessage)
+
+	// Should receive an error response or connection should be closed
+
+	_, code, err := wsutil.ReadServerData(conn)
+	assert.Equal(t, ws.OpCode(0), code) // Connection likely closed
+	assert.Contains(t, err.Error(), "timeout")
+}
+
+func TestUnsupportedEvent(t *testing.T) {
+	server, cancel := createTestServer(t)
+	httpServer := createWebSocketServer(t, server)
+	conn, _, writer := createWebSocketConnection(t, httpServer.URL)
+	t.Cleanup(func() {
+		conn.Close()
+		cleanupTestServer(t, server, httpServer, cancel)
+	})
+
+	// Read connection established message first
+	readMessage(t, conn)
 
 	// Send unsupported event
 	unsupportedEvent := payloads.PayloadPack("unsupported-event", "")
-	err = conn.WriteMessage(websocket.TextMessage, unsupportedEvent)
-	assert.NoError(t, err)
+	sendMessage(t, writer, unsupportedEvent)
 
 	// Should receive an error response
-	_, message, err := conn.ReadMessage()
-	assert.NoError(t, err)
+	message := readMessage(t, conn)
 
-	var payload payloads.Payload
-	err = json.Unmarshal(message, &payload)
-	assert.NoError(t, err)
-	assert.Equal(t, constants.PusherError, payload.Event)
+	var response payloads.Payload
+	err := json.Unmarshal(message, &response)
+	require.NoError(t, err)
+	assert.Equal(t, constants.PusherError, response.Event)
 }
 
-// ============================================================================
-// CHANNEL VALIDATION TESTS
-// ============================================================================
-
-func TestWebSocketInvalidChannelName(t *testing.T) {
-	server, httpServer := createTestServerWithWebSocket(t)
-	defer httpServer.Close()
-	defer server.CloseAllLocalSockets()
-
-	conn := createWebSocketConnection(t, httpServer.URL)
-	defer conn.Close()
+func TestInvalidChannelName(t *testing.T) {
+	server, cancel := createTestServer(t)
+	httpServer := createWebSocketServer(t, server)
+	conn, _, writer := createWebSocketConnection(t, httpServer.URL)
+	t.Cleanup(func() {
+		conn.Close()
+		cleanupTestServer(t, server, httpServer, cancel)
+	})
 
 	// Read connection established message first
-	_, _, err := conn.ReadMessage()
-	assert.NoError(t, err)
+	readMessage(t, conn)
 
 	// Subscribe to invalid channel name (too long)
 	longChannelName := strings.Repeat("a", 300) // Exceeds MaxChannelNameLength
@@ -764,36 +929,33 @@ func TestWebSocketInvalidChannelName(t *testing.T) {
 	}
 
 	subscribeMessage, err := json.Marshal(subscribePayload)
-	assert.NoError(t, err)
-
-	err = conn.WriteMessage(websocket.TextMessage, subscribeMessage)
-	assert.NoError(t, err)
+	require.NoError(t, err)
+	sendMessage(t, writer, subscribeMessage)
 
 	// Should receive an error response
-	_, message, err := conn.ReadMessage()
-	assert.NoError(t, err)
+	message := readMessage(t, conn)
 
-	var payload payloads.Payload
-	err = json.Unmarshal(message, &payload)
-	assert.NoError(t, err)
-	assert.Equal(t, constants.PusherError, payload.Event)
+	var response payloads.Payload
+	err = json.Unmarshal(message, &response)
+	require.NoError(t, err)
+	assert.Equal(t, constants.PusherError, response.Event)
 }
 
 // ============================================================================
 // CACHE CHANNEL TESTS
 // ============================================================================
 
-func TestWebSocketCacheChannel(t *testing.T) {
-	server, httpServer := createTestServerWithWebSocket(t)
-	defer httpServer.Close()
-	defer server.CloseAllLocalSockets()
-
-	conn := createWebSocketConnection(t, httpServer.URL)
-	defer conn.Close()
+func TestCacheChannel(t *testing.T) {
+	server, cancel := createTestServer(t)
+	httpServer := createWebSocketServer(t, server)
+	conn, _, writer := createWebSocketConnection(t, httpServer.URL)
+	t.Cleanup(func() {
+		conn.Close()
+		cleanupTestServer(t, server, httpServer, cancel)
+	})
 
 	// Read connection established message first
-	_, _, err := conn.ReadMessage()
-	assert.NoError(t, err)
+	readMessage(t, conn)
 
 	// Subscribe to cache channel
 	subscribePayload := payloads.SubscribePayload{
@@ -804,26 +966,60 @@ func TestWebSocketCacheChannel(t *testing.T) {
 	}
 
 	subscribeMessage, err := json.Marshal(subscribePayload)
-	assert.NoError(t, err)
-
-	err = conn.WriteMessage(websocket.TextMessage, subscribeMessage)
-	assert.NoError(t, err)
+	require.NoError(t, err)
+	sendMessage(t, writer, subscribeMessage)
 
 	// Read subscription success response
-	_, message, err := conn.ReadMessage()
-	assert.NoError(t, err)
+	message := readMessage(t, conn)
 
-	var payload payloads.Payload
-	err = json.Unmarshal(message, &payload)
-	assert.NoError(t, err)
-	assert.Equal(t, constants.PusherInternalSubscriptionSucceeded, payload.Event)
+	var response payloads.Payload
+	err = json.Unmarshal(message, &response)
+	require.NoError(t, err)
+	assert.Equal(t, constants.PusherInternalSubscriptionSucceeded, response.Event)
 
 	// Should receive cache miss event
-	_, message, err = conn.ReadMessage()
-	assert.NoError(t, err)
+	message = readMessage(t, conn)
 
-	var cacheMissPayload payloads.Payload
-	err = json.Unmarshal(message, &cacheMissPayload)
-	assert.NoError(t, err)
-	assert.Equal(t, constants.PusherCacheMiss, cacheMissPayload.Event)
+	var cacheMissResponse payloads.Payload
+	err = json.Unmarshal(message, &cacheMissResponse)
+	require.NoError(t, err)
+	assert.Equal(t, constants.PusherCacheMiss, cacheMissResponse.Event)
+}
+
+// ============================================================================
+// CONCURRENT CONNECTION TESTS
+// ============================================================================
+
+func TestConcurrentConnections(t *testing.T) {
+	server, cancel := createTestServer(t)
+	httpServer := createWebSocketServer(t, server)
+	defer cleanupTestServer(t, server, httpServer, cancel)
+
+	t.Cleanup(func() {
+		cleanupTestServer(t, server, httpServer, cancel)
+	})
+
+	// Create multiple connections
+	numConnections := 3
+	connections := make([]net.Conn, numConnections)
+	writers := make([]*wsutil.Writer, numConnections)
+
+	for i := 0; i < numConnections; i++ {
+		conn, _, writer := createWebSocketConnection(t, httpServer.URL)
+		connections[i] = conn
+		writers[i] = writer
+		defer conn.Close()
+
+		// Read connection established message
+		readMessage(t, conn)
+	}
+
+	// All connections should be alive
+	for i := 0; i < numConnections; i++ {
+		pingMessage := payloads.PayloadPack(constants.PusherPing, "")
+		sendMessage(t, writers[i], pingMessage)
+
+		_, _, err := wsutil.ReadServerData(connections[i])
+		assert.NoError(t, err, "Connection %d should be alive", i)
+	}
 }

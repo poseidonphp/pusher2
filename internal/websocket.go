@@ -4,13 +4,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"sync"
 	"time"
 
 	"pusher/internal/apps"
 	"pusher/internal/cache"
 
-	"github.com/gorilla/websocket"
+	"github.com/gobwas/ws/wsutil"
+
 	pusherClient "github.com/pusher/pusher-http-go/v5"
 
 	"pusher/internal/constants"
@@ -24,7 +27,7 @@ type WebSocket struct {
 	app                *apps.App
 	SubscribedChannels map[constants.ChannelName]*Channel
 	PresenceData       map[constants.ChannelName]*pusherClient.MemberData
-	conn               *websocket.Conn
+	conn               net.Conn
 	closed             bool
 	mutex              sync.Mutex
 	sendMutex          sync.Mutex
@@ -32,6 +35,10 @@ type WebSocket struct {
 	userID             string
 	userAuthChannel    chan bool
 	userHasAuthorized  bool
+
+	// adding new to support gowab websocket
+	connReader *wsutil.Reader
+	connWriter *wsutil.Writer
 }
 
 type UserSigninPayload struct {
@@ -66,11 +73,21 @@ func (w *WebSocket) Send(msg []byte) {
 
 	// Send a message to the client
 	w.sendMutex.Lock() // obtain a lock to prevent concurrent websocket writes which would panic
+	defer w.sendMutex.Unlock()
+
 	_ = w.conn.SetWriteDeadline(time.Now().Add(constants.WriteWait))
-	if err := w.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+
+	// Write a text frame
+	if _, err := w.connWriter.Write(msg); err != nil {
 		w.closed = true
+		return
 	}
-	w.sendMutex.Unlock()
+	if err := w.connWriter.Flush(); err != nil {
+		w.closed = true
+		return
+	}
+
+	// w.sendMutex.Unlock()
 	// Mark WebSocket message sent in metrics
 	if w.server.MetricsManager != nil {
 		w.server.MetricsManager.MarkWsMessageSent(w.app.ID, msg)
@@ -124,7 +141,6 @@ func (w *WebSocket) Listen() {
 		w.tracef("closing listener")
 	}()
 
-	w.conn.SetReadLimit(constants.MaxMessageSize)
 	w.tracef("starting reader")
 
 	for {
@@ -133,24 +149,45 @@ func (w *WebSocket) Listen() {
 			return
 		}
 
-		_, msgRaw, err := w.conn.ReadMessage()
+		header, err := w.connReader.NextFrame()
 		if err != nil {
 			w.handleReadMessageError(err)
 			return
+		}
+
+		if header.Length > (constants.MaxMessageSize) {
+			w.errorf("Message too large: %d bytes", header.Length)
+			return
+		}
+
+		payload := make([]byte, header.Length)
+
+		_, err = io.ReadFull(w.connReader, payload)
+
+		if err != nil {
+			w.handleReadMessageError(err)
+			return
+		}
+
+		if header.Length == 0 || header.Length <= 2 {
+			// if this is an empty payload, or an error payload, just ignore it
+			// this includes empty json payloads of {}
+			continue
 		}
 
 		// reset readTimeout
 		w.resetReadTimeout()
 
 		// Mark WebSocket message received in metrics
-		if w.server.MetricsManager != nil {
-			w.server.MetricsManager.MarkWsMessageReceived(w.app.ID, msgRaw)
+		if w.server != nil && w.server.MetricsManager != nil {
+			w.server.MetricsManager.MarkWsMessageReceived(w.app.ID, payload)
 		}
 
 		// parse incoming payload using msgRaw
-		parseErr := w.parseIncomingPayload(msgRaw)
+		log.Logger().Tracef("Payload length: %d, payload: %s", len(payload), payload)
+		parseErr := w.parseIncomingPayload(payload)
 		if parseErr != nil {
-			log.Logger().Error("failed to parse incoming payload: ", parseErr)
+			log.Logger().Errorf("failed to parse incoming payload: %s, `%s`", parseErr, payload)
 			w.Send(payloads.ErrorPack(parseErr.Code, parseErr.Message))
 		}
 	}
@@ -219,7 +256,7 @@ func (w *WebSocket) Cleanup() {
 	w.ID = ""
 	w.app = nil
 	w.conn = nil
-	w.closed = false
+	w.closed = true
 	w.server = nil
 	w.userID = ""
 	w.userHasAuthorized = false
@@ -329,7 +366,11 @@ func (w *WebSocket) handleClientEvent(msgRaw []byte) *util.Error {
 	// check to make sure the client is in the channel. Because this is a client event, we can force a onlyLocal check
 	if !w.server.Adapter.IsInChannel(w.app.ID, channel, w.ID, true) {
 		w.tracef("Socket %s is not in Channel %s", w.ID, channel)
-		return nil
+		return &util.Error{
+			Code:    util.ErrCodeNotSubscribed,
+			Message: fmt.Sprintf("socket is not in channel %s", channel),
+		}
+		// return nil
 	}
 
 	// TODO: Add rate limiting here to prevent clients from sending too many events
@@ -436,28 +477,55 @@ func (w *WebSocket) handlePresenceChannelSubscription(channelObj *Channel, joinR
 
 // handleReadMessageError processes WebSocket read errors
 // Differentiates between expected and unexpected closure events
+// func (w *WebSocket) handleReadMessageError(err error) {
+// 	expectedCodes := []int{websocket.CloseGoingAway, websocket.CloseNormalClosure}
+// 	if websocket.IsUnexpectedCloseError(err, expectedCodes...) {
+// 		var e *websocket.CloseError
+// 		if errors.As(err, &e) {
+// 			w.debugf("Unexpected close error: %s", e.Error())
+// 		} else {
+// 			w.debugf("Unexpected close error: %s", err)
+// 		}
+// 		// Mark error in metrics
+// 		if w.server.MetricsManager != nil {
+// 			w.server.MetricsManager.MarkError("websocket_abnormal_closure", w.app.ID)
+// 		}
+// 		w.closeConnection(util.ErrCodeWebsocketAbnormalClosure)
+// 	} else {
+// 		w.tracef("Closing connection as expected: %s", err.Error())
+// 		// Mark error in metrics
+// 		if w.server.MetricsManager != nil {
+// 			w.server.MetricsManager.MarkError("websocket_expected_closure", w.app.ID)
+// 		}
+// 		w.closeConnection(util.ErrCodeCloseExpected)
+// 	}
+// }
+
 func (w *WebSocket) handleReadMessageError(err error) {
-	expectedCodes := []int{websocket.CloseGoingAway, websocket.CloseNormalClosure}
-	if websocket.IsUnexpectedCloseError(err, expectedCodes...) {
-		var e *websocket.CloseError
-		if errors.As(err, &e) {
-			w.debugf("Unexpected close error: %s", e.Error())
-		} else {
-			w.debugf("Unexpected close error: %s", err)
-		}
-		// Mark error in metrics
-		if w.server.MetricsManager != nil {
-			w.server.MetricsManager.MarkError("websocket_abnormal_closure", w.app.ID)
-		}
-		w.closeConnection(util.ErrCodeWebsocketAbnormalClosure)
-	} else {
-		w.tracef("Closing connection as expected: %s", err.Error())
-		// Mark error in metrics
+	if err == io.EOF || errors.Is(err, net.ErrClosed) {
+		w.tracef("Connection closed by client: %s", err.Error())
 		if w.server.MetricsManager != nil {
 			w.server.MetricsManager.MarkError("websocket_expected_closure", w.app.ID)
 		}
 		w.closeConnection(util.ErrCodeCloseExpected)
+		return
 	}
+
+	// gobwas/ws may return ws.ErrHandshake or other errors
+	// if errors.Is(err, ws.Err) {
+	// 	w.errorf("WebSocket handshake error: %s", err.Error())
+	// 	if w.server.MetricsManager != nil {
+	// 		w.server.MetricsManager.MarkError("websocket_handshake_error", w.app.ID)
+	// 	}
+	// 	w.closeConnection(util.ErrCodeWebsocketAbnormalClosure)
+	// 	return
+	// }
+
+	w.debugf("Unexpected close error: %s", err.Error())
+	if w.server.MetricsManager != nil {
+		w.server.MetricsManager.MarkError("websocket_abnormal_closure", w.app.ID)
+	}
+	w.closeConnection(util.ErrCodeWebsocketAbnormalClosure)
 }
 
 // handleSubscribeRequest processes a client's channel subscription request.
@@ -842,6 +910,7 @@ func (w *WebSocket) unsubscribeFromAllChannels() {
 // vacated events when the last member leaves. It also cleans up local subscription state.
 func (w *WebSocket) unsubscribeFromChannel(channelObj *Channel) {
 	w.tracef("Unsubscribing from Channel: %s", channelObj.Name)
+
 	leaveResponse := channelObj.Leave(w.server.Adapter, w)
 
 	if leaveResponse.Success {

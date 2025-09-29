@@ -14,7 +14,7 @@ jobs:
     strategy:
       matrix:
         # build and publish in parallel: linux/386, linux/amd64, linux/arm64, windows/386, windows/amd64, darwin/amd64, darwin/arm64
-        goos: [linux, darwin]
+        goos: [linux, darwin, windows]
         goarch: [amd64, arm64]
         exclude:
           - goarch: "amd64"
@@ -35,4 +35,4 @@ jobs:
 #          goversion: "https://dl.google.com/go/go1.13.1.linux-amd64.tar.gz"
           project_path: "./cmd/"
           binary_name: "socket_rush_${{ matrix.goos }}_${{ matrix.goarch }}"
-          ldflags: "-s -w -X main.version=${{ github.event.release.tag_name }}"
+          ldflags: "-s -w -X pusher/internal/config.Version=${{ github.event.release.tag_name }}"

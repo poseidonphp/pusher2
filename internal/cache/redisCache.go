@@ -20,6 +20,10 @@ func (r *RedisCache) Init(_ context.Context) error {
 	return nil
 }
 
+func (r *RedisCache) Shutdown() {
+	// Redis cache doesn't have background goroutines, so no cleanup needed
+}
+
 func (r *RedisCache) getKey(key string) string {
 	return r.Prefix + ":cache:" + key
 }

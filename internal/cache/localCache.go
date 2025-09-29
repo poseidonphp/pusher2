@@ -14,12 +14,21 @@ type localCacheItem struct {
 type LocalCache struct {
 	cacheItems map[string]*localCacheItem
 	mu         sync.Mutex
+	cancel     context.CancelFunc
 }
 
 func (l *LocalCache) Init(ctx context.Context) error {
 	l.cacheItems = make(map[string]*localCacheItem)
-	go l.cleanupJob(ctx)
+	var c context.Context
+	c, l.cancel = context.WithCancel(ctx)
+	go l.cleanupJob(c)
 	return nil
+}
+
+func (l *LocalCache) Shutdown() {
+	if l.cancel != nil {
+		l.cancel()
+	}
 }
 
 func (l *LocalCache) cleanupJob(ctx context.Context) {

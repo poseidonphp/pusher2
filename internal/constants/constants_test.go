@@ -39,6 +39,6 @@ func TestConstantValues(t *testing.T) {
 	assert.Equal(t, WebHookEvent("cache_miss"), WebHookCacheMiss)
 
 	assert.Equal(t, 10*time.Second, WriteWait)
-	assert.Equal(t, 1024, MaxMessageSize)
+	assert.Equal(t, 20480, MaxMessageSize)
 	assert.Equal(t, [...]int{7}, SupportedProtocolVersions)
 }

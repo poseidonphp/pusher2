@@ -97,6 +97,12 @@ func (q *AbstractQueue) Send(app *apps.App, event *pusher.WebhookEvent) {
 	}
 }
 
+func (q *AbstractQueue) Shutdown(ctx context.Context) {
+	if q.concreteQueue != nil {
+		q.concreteQueue.Shutdown(ctx)
+	}
+}
+
 func (q *AbstractQueue) prepareQueuedMessages(app *apps.App, event *pusher.WebhookEvent) {
 	// loop through app webhooks
 	// send to queue for each webhook and include the webhook

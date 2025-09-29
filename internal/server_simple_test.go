@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"pusher/internal/apps"
-	"pusher/internal/config"
+	serverConfig "pusher/internal/config"
 	"pusher/internal/metrics"
 	"pusher/internal/webhooks"
 
@@ -15,7 +15,7 @@ import (
 // TestNewServerBasic tests the NewServer function with basic cases
 func TestNewServerBasic(t *testing.T) {
 	t.Run("successful server creation with local adapter", func(t *testing.T) {
-		config := &config.ServerConfig{
+		config := &serverConfig.ServerConfig{
 			AppManager:         "array",
 			AdapterDriver:      "local",
 			QueueDriver:        "local",
@@ -65,7 +65,7 @@ func TestRunBasic(t *testing.T) {
 // TestLoadAppManagerBasic tests the loadAppManager function
 func TestLoadAppManagerBasic(t *testing.T) {
 	t.Run("array app manager", func(t *testing.T) {
-		config := &config.ServerConfig{
+		config := &serverConfig.ServerConfig{
 			AppManager: "array",
 			Applications: func() []apps.App {
 				app := apps.App{ID: "123", Key: "test-key", Secret: "test-secret"}
@@ -85,7 +85,7 @@ func TestLoadAppManagerBasic(t *testing.T) {
 // TestLoadAdapterBasic tests the loadAdapter function
 func TestLoadAdapterBasic(t *testing.T) {
 	t.Run("local adapter", func(t *testing.T) {
-		config := &config.ServerConfig{
+		config := &serverConfig.ServerConfig{
 			AdapterDriver: "local",
 		}
 
@@ -97,7 +97,7 @@ func TestLoadAdapterBasic(t *testing.T) {
 	})
 
 	t.Run("redis adapter with nil redis instance", func(t *testing.T) {
-		config := &config.ServerConfig{
+		config := &serverConfig.ServerConfig{
 			AdapterDriver: "redis",
 			RedisInstance: nil,
 		}
@@ -119,7 +119,7 @@ func TestLoadQueueManagerBasic(t *testing.T) {
 	}
 
 	t.Run("local queue manager", func(t *testing.T) {
-		config := &config.ServerConfig{
+		config := &serverConfig.ServerConfig{
 			QueueDriver: "local",
 		}
 
@@ -131,7 +131,7 @@ func TestLoadQueueManagerBasic(t *testing.T) {
 	})
 
 	t.Run("redis queue manager with nil redis instance", func(t *testing.T) {
-		config := &config.ServerConfig{
+		config := &serverConfig.ServerConfig{
 			QueueDriver:   "redis",
 			RedisInstance: nil,
 		}
@@ -148,7 +148,7 @@ func TestLoadQueueManagerBasic(t *testing.T) {
 // TestLoadCacheManagerBasic tests the loadCacheManager function
 func TestLoadCacheManagerBasic(t *testing.T) {
 	t.Run("local cache manager", func(t *testing.T) {
-		config := &config.ServerConfig{
+		config := &serverConfig.ServerConfig{
 			ChannelCacheDriver: "local",
 		}
 
@@ -160,7 +160,7 @@ func TestLoadCacheManagerBasic(t *testing.T) {
 	})
 
 	t.Run("redis cache manager with nil redis instance", func(t *testing.T) {
-		config := &config.ServerConfig{
+		config := &serverConfig.ServerConfig{
 			ChannelCacheDriver: "redis",
 			RedisInstance:      nil,
 		}
@@ -201,14 +201,14 @@ func TestHandlePanicBasic(t *testing.T) {
 	})
 }
 
-// TestHandleInterruptBasic tests the handleInterrupt function
+// TestHandleInterruptBasic tests the attemptGracefulShutdown function
 func TestHandleInterruptBasic(t *testing.T) {
 	t.Run("graceful shutdown", func(t *testing.T) {
-		// Test handleInterrupt
+		// Test attemptGracefulShutdown
 		// Note: This will call os.Exit(0) so we can't test the full flow
 		// But we can test that the function exists and can be called
 		assert.NotPanics(t, func() {
-			_ = handleInterrupt
+			_ = attemptGracefulShutdown
 		})
 	})
 }
@@ -216,7 +216,7 @@ func TestHandleInterruptBasic(t *testing.T) {
 // TestServeMetricsBasic tests the serveMetrics function
 func TestServeMetricsBasic(t *testing.T) {
 	t.Run("serveMetrics with nil server", func(t *testing.T) {
-		config := &config.ServerConfig{
+		config := &serverConfig.ServerConfig{
 			MetricsEnabled: true,
 			BindAddress:    "localhost",
 			MetricsPort:    "9090",

@@ -149,7 +149,7 @@ func (c *Channel) Join(adapter AdapterInterface, ws *WebSocket, message payloads
 // and provide member lists to connected clients.
 func (c *Channel) joinPresenceChannel(adapter AdapterInterface, ws *WebSocket, message payloads.SubscribePayload) *ChannelJoinResponse {
 	// Check if adding this member would exceed the channel's member limit
-	if c.App.MaxPresenceMembersPerChannel > -1 {
+	if c.App.MaxPresenceMembersPerChannel > 0 {
 		memberCount := adapter.GetChannelMembersCount(c.App.ID, c.Name, false)
 		log.Logger().Debugf("Total channel members for %s: %d", c.Name, memberCount)
 		if memberCount+1 > c.App.MaxPresenceMembersPerChannel {

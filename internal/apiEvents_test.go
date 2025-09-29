@@ -104,6 +104,10 @@ func (m *MockCacheManagerForApiEvents) Init(_ context.Context) error {
 	return nil
 }
 
+func (m *MockCacheManagerForApiEvents) Shutdown() {
+	// Mock implementation - no cleanup needed
+}
+
 func (m *MockCacheManagerForApiEvents) Set(key string, value string) {
 }
 

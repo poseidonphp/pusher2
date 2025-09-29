@@ -10,6 +10,7 @@ import (
 
 type CacheContract interface {
 	Init(ctx context.Context) error
+	Shutdown() // Gracefully shut down the cache and any background goroutines
 	Get(key string) (string, bool)
 	Set(key string, value string)                      // create or update the key with the value
 	SetEx(key string, value string, ttl time.Duration) // create or update the key with the value and set expiration
