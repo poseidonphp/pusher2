@@ -158,7 +158,7 @@ func InitializeServerConfig(_ *context.Context) (*ServerConfig, error) {
 			if err = godotenv.Load(envFile); err != nil {
 				return nil, fmt.Errorf("error loading .env file (%s): %s", envFile, err.Error())
 			}
-		} else {
+		} else if isTest() {
 			return nil, fmt.Errorf("error finding .env file (%s): %s", envFile, err.Error())
 		}
 	}
