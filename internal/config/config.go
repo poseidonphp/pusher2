@@ -77,8 +77,8 @@ func initFlags() {
 	pflag.Bool("redis-cluster", false, "Use Redis cluster mode")
 	pflag.String("log-level", "warn", "Log level (trace, debug, info, warn, error)")
 	pflag.Bool("ignore-logger-middleware", false, "Ignore logger middleware")
-	pflag.Bool("metrics-enabled", true, "Enable metrics collection and endpoints")
-	pflag.Int("metrics-port", 6001, "Port on which to run the metrics server")
+	pflag.Bool("metrics-enabled", false, "Enable metrics collection and endpoints")
+	pflag.Int("metrics-port", 6002, "Port on which to run the metrics server")
 
 	// Single app config
 	pflag.String("app-id", "", "Default app id")
