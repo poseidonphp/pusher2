@@ -257,6 +257,10 @@ func InitializeServerConfig(_ *context.Context) (*ServerConfig, error) {
 		hasCacheMissWebhooks := viper.GetBool("app_has_cache_miss_webhooks")
 		webhookBatchingEnabled := viper.GetBool("app_webhook_batching_enabled")
 		webhooksEnabled := viper.GetBool("app_webhooks_enabled")
+		webhookUrl := viper.GetString("app_webhook_url")
+		webhookSnsRegion := viper.GetString("app_webhook_sns_region")
+		webhookSnsTopicArn := viper.GetString("app_webhook_sns_topic_arn")
+		webhookFilterPrefix := viper.GetString("app_webhook_filter_prefix")
 
 		// activityTimeoutInt := int64(math.Round((float64(activityTimeout) * 10.0) / 9.0))
 		// readTimeout := time.Duration(activityTimeoutInt) * time.Second
@@ -293,6 +297,10 @@ func InitializeServerConfig(_ *context.Context) (*ServerConfig, error) {
 				HasCacheMissWebhooks:         hasCacheMissWebhooks,
 				WebhookBatchingEnabled:       webhookBatchingEnabled,
 				WebhooksEnabled:              webhooksEnabled,
+				WebhookURL:                   webhookUrl,
+				WebhookSNSRegion:             webhookSnsRegion,
+				WebhookSNSTopicARN:           webhookSnsTopicArn,
+				WebhookFilterPrefix:          webhookFilterPrefix,
 			})
 		}
 	}
