@@ -57,6 +57,10 @@ func isTest() bool {
 	return strings.HasSuffix(os.Args[0], ".test") || os.Getenv("GO_TEST") != ""
 }
 
+// initFlags initializes the command-line flags using pflag
+// and sets up Viper bindings for configuration management.
+// It defines flags for config-file and env-file overrides,
+// as well as the actual application flags with their defaults.
 func initFlags() {
 	// 1) Define flags for config-file and env-file overrides
 	pflag.BoolP("version", "v", false, "Print version information and exit")
@@ -267,7 +271,7 @@ func InitializeServerConfig(_ *context.Context) (*ServerConfig, error) {
 		authorizationTimeout := time.Duration(authorizationTimeoutInSeconds) * time.Second
 
 		if id != "" || key != "" || sec != "" {
-			cfg.Applications = append(cfg.Applications, apps.App{
+			newApp := apps.App{
 				ID:              id,
 				Key:             key,
 				Secret:          sec,
@@ -301,7 +305,45 @@ func InitializeServerConfig(_ *context.Context) (*ServerConfig, error) {
 				WebhookSNSRegion:             webhookSnsRegion,
 				WebhookSNSTopicARN:           webhookSnsTopicArn,
 				WebhookFilterPrefix:          webhookFilterPrefix,
-			})
+			}
+
+			if webhookUrl != "" || webhookSnsTopicArn != "" {
+				newApp.Webhooks = make([]constants.Webhook, 0)
+				eventTypes := make([]string, 0)
+				if newApp.HasClientEventWebhooks {
+					eventTypes = append(eventTypes, "client_event")
+				}
+				if newApp.HasChannelOccupiedWebhooks {
+					eventTypes = append(eventTypes, "channel_occupied")
+				}
+				if newApp.HasChannelVacatedWebhooks {
+					eventTypes = append(eventTypes, "channel_vacated")
+				}
+				if newApp.HasMemberAddedWebhooks {
+					eventTypes = append(eventTypes, "member_added")
+				}
+				if newApp.HasMemberRemovedWebhooks {
+					eventTypes = append(eventTypes, "member_removed")
+				}
+				if newApp.HasCacheMissWebhooks {
+					eventTypes = append(eventTypes, "cache_miss")
+				}
+				if len(eventTypes) == 0 {
+					eventTypes = append(eventTypes, "*")
+				}
+				newWebhook := constants.Webhook{
+					URL:        webhookUrl,
+					EventTypes: eventTypes,
+					Filter: constants.WebhookFilters{
+						ChannelNameStartsWith: webhookFilterPrefix,
+					},
+					SNSTopicARN: webhookSnsTopicArn,
+				}
+				newApp.Webhooks = append(newApp.Webhooks, newWebhook)
+			}
+
+			cfg.Applications = append(cfg.Applications, newApp)
+
 		}
 	}
 
