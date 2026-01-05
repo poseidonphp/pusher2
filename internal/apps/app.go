@@ -119,7 +119,7 @@ func (a *App) SetMissingDefaults() {
 	a.WebhooksEnabled = getValueOrFallback(a.WebhooksEnabled, false)
 
 	if a.Webhooks == nil {
-		a.Webhooks = make([]constants.Webhook, 0, len(a.Webhooks))
+		a.Webhooks = make([]constants.Webhook, 0)
 	}
 }
 
