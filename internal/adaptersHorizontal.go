@@ -9,7 +9,8 @@ import (
 	"pusher/internal/metrics"
 	"pusher/log"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	pusherClient "github.com/pusher/pusher-http-go/v5"
 )
 
@@ -32,15 +33,17 @@ func NewHorizontalAdapter(adapter HorizontalInterface, metricsManager metrics.Me
 		responseChannel: "",
 		requests:        make(map[string]*HorizontalRequest),
 		channel:         "horizontal-adapter",
-		uuid:            uuid.NewString(),
+		uuid:            uuid.NewV7().String(),
 		metricsManager:  metricsManager,
 	}
 	ha.LocalAdapter.metricsManager = metricsManager
+
 	err := ha.Init() // calls the init on the local adapter
 	if err != nil {
 		log.Logger().Errorf("Error initializing HorizontalAdapter: %v", err)
 		return nil, err
 	}
+
 	return ha, nil
 }
 
@@ -681,7 +684,7 @@ func (ha *HorizontalAdapter) onResponse(channel string, msg string) {
 
 // sendRequest sends a request to other nodes to get data from them
 func (ha *HorizontalAdapter) sendRequest(appId constants.AppID, requestType HorizontalRequestType, requestExtra *HorizontalRequestExtra, requestOptions *HorizontalRequestOptions) *HorizontalResponse {
-	requestID := uuid.NewString()
+	requestID := uuid.NewV7().String()
 	defer func() {
 		ha.mutex.Lock()
 		delete(ha.requests, requestID)
