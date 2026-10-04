@@ -55,4 +55,4 @@ const (
 	// MaxEventSizeKb = 10               // Maximum event size allowed from peer. 10KB
 )
 
-var SupportedProtocolVersions = [...]int{7}
+var SupportedProtocolVersions = []int{7}

@@ -7,10 +7,6 @@ redis-down:
 	docker stop socket-rush-redis
 	#docker rm socket-rush-redis
 
-.PHONY ui:
-ui:
-	cd dev/ui && yarn && yarn dev
-
 .PHONY run:
 run:
 	go run cmd/main.go
@@ -35,20 +31,6 @@ run-alt2:
 
 
 
-.PHONY auth:
-auth:
-	cd dev/auth-server && go run main.go
-
-.PHONY auth1:
-auth1:
-	cd dev/auth-server && go run main.go --app-id=1 --app-key=app-key1 --app-secret=app-secret1
-
-
-.PHONY auth2:
-auth2:
-	cd dev/auth-server && go run main.go --app-id=2 --app-key=app-key2 --app-secret=app-secret2
-
-
 .PHONY build:
 build:
 	GOOS=darwin GOARCH=amd64 go build -mod=readonly -ldflags="-s -w" -o pusher-server-mac cmd/main.go
@@ -64,3 +46,27 @@ test:
 	# go tool cover -html=coverage.out -o coverage.html
 	# go test -v ./... -coverprofile=coverage.out
 	# go tool cover -html=coverage.out -o coverage.html
+
+
+#################################
+#### DEVELOPMENT ENVIRONMENT ####
+#################################
+
+.PHONY ui:
+ui:
+	cd dev/ui && yarn && yarn dev
+
+
+.PHONY auth:
+auth:
+	cd dev/auth-server && go run main.go
+
+.PHONY auth1:
+auth1:
+	cd dev/auth-server && go run main.go --app-id=1 --app-key=app-key1 --app-secret=app-secret1
+
+
+.PHONY auth2:
+auth2:
+	cd dev/auth-server && go run main.go --app-id=2 --app-key=app-key2 --app-secret=app-secret2
+

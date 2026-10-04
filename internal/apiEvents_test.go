@@ -15,7 +15,6 @@ import (
 	"pusher/internal/metrics"
 	"pusher/internal/payloads"
 
-	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -164,14 +163,14 @@ func TestCheckMessageToBroadcast(t *testing.T) {
 	app := createTestAppForApiEvents()
 
 	t.Run("ValidSingleChannel", func(t *testing.T) {
-		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		w := httptest.NewRecorder()
 		apiMsg := &payloads.PusherApiMessage{
 			Name:    "test-event",
 			Data:    "test-data",
 			Channel: "public-channel",
 		}
 
-		err := checkMessageToBroadcast(c, app, apiMsg)
+		err := checkMessageToBroadcast(w, app, apiMsg)
 
 		assert.NoError(t, err)
 		assert.Len(t, apiMsg.Channels, 1)
@@ -179,14 +178,14 @@ func TestCheckMessageToBroadcast(t *testing.T) {
 	})
 
 	t.Run("ValidMultipleChannels", func(t *testing.T) {
-		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		w := httptest.NewRecorder()
 		apiMsg := &payloads.PusherApiMessage{
 			Name:     "test-event",
 			Data:     "test-data",
 			Channels: []constants.ChannelName{"public-channel-1", "public-channel-2"},
 		}
 
-		err := checkMessageToBroadcast(c, app, apiMsg)
+		err := checkMessageToBroadcast(w, app, apiMsg)
 
 		assert.NoError(t, err)
 		assert.Len(t, apiMsg.Channels, 2)
@@ -194,14 +193,13 @@ func TestCheckMessageToBroadcast(t *testing.T) {
 
 	t.Run("InvalidChannel", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
 		apiMsg := &payloads.PusherApiMessage{
 			Name:    "test-event",
 			Data:    "test-data",
 			Channel: "invalid*channel", // Invalid channel name
 		}
 
-		err := checkMessageToBroadcast(c, app, apiMsg)
+		err := checkMessageToBroadcast(w, app, apiMsg)
 
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid Channel")
@@ -210,7 +208,6 @@ func TestCheckMessageToBroadcast(t *testing.T) {
 
 	t.Run("TooManyChannels", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
 		channels := make([]constants.ChannelName, 11) // More than MaxEventChannelsAtOnce (10)
 		for i := 0; i < 11; i++ {
 			channels[i] = constants.ChannelName(fmt.Sprintf("channel-%d", i))
@@ -221,7 +218,7 @@ func TestCheckMessageToBroadcast(t *testing.T) {
 			Channels: channels,
 		}
 
-		err := checkMessageToBroadcast(c, app, apiMsg)
+		err := checkMessageToBroadcast(w, app, apiMsg)
 
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "too many channels")
@@ -230,7 +227,6 @@ func TestCheckMessageToBroadcast(t *testing.T) {
 
 	t.Run("EventNameTooLong", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
 		longEventName := string(make([]byte, 101)) // Longer than MaxEventNameLength (100)
 		apiMsg := &payloads.PusherApiMessage{
 			Name:    longEventName,
@@ -238,7 +234,7 @@ func TestCheckMessageToBroadcast(t *testing.T) {
 			Channel: "public-channel",
 		}
 
-		err := checkMessageToBroadcast(c, app, apiMsg)
+		err := checkMessageToBroadcast(w, app, apiMsg)
 
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "event name too long")
@@ -247,7 +243,6 @@ func TestCheckMessageToBroadcast(t *testing.T) {
 
 	t.Run("EventDataTooLarge", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
 		largeData := string(make([]byte, 11*1024)) // Larger than MaxEventPayloadInKb*1024 (10KB)
 		apiMsg := &payloads.PusherApiMessage{
 			Name:    "test-event",
@@ -255,7 +250,7 @@ func TestCheckMessageToBroadcast(t *testing.T) {
 			Channel: "public-channel",
 		}
 
-		err := checkMessageToBroadcast(c, app, apiMsg)
+		err := checkMessageToBroadcast(w, app, apiMsg)
 
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "event data too large")
@@ -263,7 +258,7 @@ func TestCheckMessageToBroadcast(t *testing.T) {
 	})
 
 	t.Run("EmptyChannelAndChannels", func(t *testing.T) {
-		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		w := httptest.NewRecorder()
 		apiMsg := &payloads.PusherApiMessage{
 			Name:     "test-event",
 			Data:     "test-data",
@@ -271,7 +266,7 @@ func TestCheckMessageToBroadcast(t *testing.T) {
 			Channels: []constants.ChannelName{}, // Empty channels
 		}
 
-		err := checkMessageToBroadcast(c, app, apiMsg)
+		err := checkMessageToBroadcast(w, app, apiMsg)
 
 		// Should not error, but channels should remain empty
 		assert.NoError(t, err)
@@ -376,16 +371,12 @@ func TestBroadcastMessage(t *testing.T) {
 }
 
 func TestEventTrigger(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
 	t.Run("SuccessfulEvent", func(t *testing.T) {
 		server, adapter, _ := createTestServerForApiEvents()
 		app := createTestAppForApiEvents()
 
 		// Create a test context with app in context
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		// Create request body
 		requestBody := payloads.PusherApiMessage{
@@ -398,10 +389,10 @@ func TestEventTrigger(t *testing.T) {
 		// Create request
 		req := httptest.NewRequest("POST", "/events", bytes.NewBuffer(jsonBody))
 		req.Header.Set("Content-Type", "application/json")
-		c.Request = req
+		req = withApp(req, app)
 
 		// Call the handler
-		EventTrigger(c, server)
+		EventTrigger(w, req, server)
 
 		// Check response
 		assert.Equal(t, http.StatusOK, w.Code)
@@ -421,12 +412,10 @@ func TestEventTrigger(t *testing.T) {
 		server, _, _ := createTestServerForApiEvents()
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
 
 		req := httptest.NewRequest("POST", "/events", nil)
-		c.Request = req
 
-		EventTrigger(c, server)
+		EventTrigger(w, req, server)
 
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 		var response map[string]string
@@ -440,14 +429,12 @@ func TestEventTrigger(t *testing.T) {
 		app := createTestAppForApiEvents()
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		req := httptest.NewRequest("POST", "/events", bytes.NewBufferString("invalid json"))
 		req.Header.Set("Content-Type", "application/json")
-		c.Request = req
+		req = withApp(req, app)
 
-		EventTrigger(c, server)
+		EventTrigger(w, req, server)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		var response map[string]string
@@ -461,8 +448,6 @@ func TestEventTrigger(t *testing.T) {
 		app := createTestAppForApiEvents()
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		// Create request with invalid channel
 		requestBody := payloads.PusherApiMessage{
@@ -474,9 +459,9 @@ func TestEventTrigger(t *testing.T) {
 
 		req := httptest.NewRequest("POST", "/events", bytes.NewBuffer(jsonBody))
 		req.Header.Set("Content-Type", "application/json")
-		c.Request = req
+		req = withApp(req, app)
 
-		EventTrigger(c, server)
+		EventTrigger(w, req, server)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		var response map[string]string
@@ -490,8 +475,6 @@ func TestEventTrigger(t *testing.T) {
 		app := createTestAppForApiEvents()
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		// Create request with missing required fields
 		requestBody := map[string]interface{}{
@@ -502,9 +485,9 @@ func TestEventTrigger(t *testing.T) {
 
 		req := httptest.NewRequest("POST", "/events", bytes.NewBuffer(jsonBody))
 		req.Header.Set("Content-Type", "application/json")
-		c.Request = req
+		req = withApp(req, app)
 
-		EventTrigger(c, server)
+		EventTrigger(w, req, server)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		var response map[string]string
@@ -515,15 +498,11 @@ func TestEventTrigger(t *testing.T) {
 }
 
 func TestBatchEventTrigger(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
 	t.Run("SuccessfulBatch", func(t *testing.T) {
 		server, adapter, _ := createTestServerForApiEvents()
 		app := createTestAppForApiEvents()
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		// Create batch request
 		requestBody := BatchEventForm{
@@ -544,9 +523,9 @@ func TestBatchEventTrigger(t *testing.T) {
 
 		req := httptest.NewRequest("POST", "/batch_events", bytes.NewBuffer(jsonBody))
 		req.Header.Set("Content-Type", "application/json")
-		c.Request = req
+		req = withApp(req, app)
 
-		BatchEventTrigger(c, server)
+		BatchEventTrigger(w, req, server)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 		var response map[string]interface{}
@@ -565,12 +544,10 @@ func TestBatchEventTrigger(t *testing.T) {
 		server, _, _ := createTestServerForApiEvents()
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
 
 		req := httptest.NewRequest("POST", "/batch_events", nil)
-		c.Request = req
 
-		BatchEventTrigger(c, server)
+		BatchEventTrigger(w, req, server)
 
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 		var response map[string]string
@@ -584,14 +561,12 @@ func TestBatchEventTrigger(t *testing.T) {
 		app := createTestAppForApiEvents()
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		req := httptest.NewRequest("POST", "/batch_events", bytes.NewBufferString("invalid json"))
 		req.Header.Set("Content-Type", "application/json")
-		c.Request = req
+		req = withApp(req, app)
 
-		BatchEventTrigger(c, server)
+		BatchEventTrigger(w, req, server)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		var response map[string]string
@@ -605,8 +580,6 @@ func TestBatchEventTrigger(t *testing.T) {
 		app := createTestAppForApiEvents()
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		requestBody := BatchEventForm{
 			Batch: []*payloads.PusherApiMessage{},
@@ -615,9 +588,9 @@ func TestBatchEventTrigger(t *testing.T) {
 
 		req := httptest.NewRequest("POST", "/batch_events", bytes.NewBuffer(jsonBody))
 		req.Header.Set("Content-Type", "application/json")
-		c.Request = req
+		req = withApp(req, app)
 
-		BatchEventTrigger(c, server)
+		BatchEventTrigger(w, req, server)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
@@ -631,8 +604,6 @@ func TestBatchEventTrigger(t *testing.T) {
 		app := createTestAppForApiEvents()
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		// Create batch with one valid and one invalid event
 		requestBody := BatchEventForm{
@@ -653,9 +624,9 @@ func TestBatchEventTrigger(t *testing.T) {
 
 		req := httptest.NewRequest("POST", "/batch_events", bytes.NewBuffer(jsonBody))
 		req.Header.Set("Content-Type", "application/json")
-		c.Request = req
+		req = withApp(req, app)
 
-		BatchEventTrigger(c, server)
+		BatchEventTrigger(w, req, server)
 
 		// Should return 400 due to validation error
 		assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -672,15 +643,11 @@ func TestBatchEventTrigger(t *testing.T) {
 }
 
 func TestApiEvents_EdgeCases(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
 	t.Run("ChannelNameAtLimit", func(t *testing.T) {
 		server, _, _ := createTestServerForApiEvents()
 		app := createTestAppForApiEvents()
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		// Create channel name at the limit
 		longChannelName := ""
@@ -696,9 +663,9 @@ func TestApiEvents_EdgeCases(t *testing.T) {
 
 		req := httptest.NewRequest("POST", "/events", bytes.NewBuffer(jsonBody))
 		req.Header.Set("Content-Type", "application/json")
-		c.Request = req
+		req = withApp(req, app)
 
-		EventTrigger(c, server)
+		EventTrigger(w, req, server)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
@@ -708,8 +675,6 @@ func TestApiEvents_EdgeCases(t *testing.T) {
 		app := createTestAppForApiEvents()
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		// Create event name at the limit
 		longEventName := string(make([]byte, app.MaxEventNameLength))
@@ -722,9 +687,9 @@ func TestApiEvents_EdgeCases(t *testing.T) {
 
 		req := httptest.NewRequest("POST", "/events", bytes.NewBuffer(jsonBody))
 		req.Header.Set("Content-Type", "application/json")
-		c.Request = req
+		req = withApp(req, app)
 
-		EventTrigger(c, server)
+		EventTrigger(w, req, server)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
@@ -734,8 +699,6 @@ func TestApiEvents_EdgeCases(t *testing.T) {
 		app := createTestAppForApiEvents()
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		// Create data at the limit
 		largeData := string(make([]byte, app.MaxEventPayloadInKb*1024))
@@ -748,9 +711,9 @@ func TestApiEvents_EdgeCases(t *testing.T) {
 
 		req := httptest.NewRequest("POST", "/events", bytes.NewBuffer(jsonBody))
 		req.Header.Set("Content-Type", "application/json")
-		c.Request = req
+		req = withApp(req, app)
 
-		EventTrigger(c, server)
+		EventTrigger(w, req, server)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
@@ -760,8 +723,6 @@ func TestApiEvents_EdgeCases(t *testing.T) {
 		app := createTestAppForApiEvents()
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		// Create channels at the limit
 		channels := make([]constants.ChannelName, app.MaxEventChannelsAtOnce)
@@ -777,24 +738,20 @@ func TestApiEvents_EdgeCases(t *testing.T) {
 
 		req := httptest.NewRequest("POST", "/events", bytes.NewBuffer(jsonBody))
 		req.Header.Set("Content-Type", "application/json")
-		c.Request = req
+		req = withApp(req, app)
 
-		EventTrigger(c, server)
+		EventTrigger(w, req, server)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
 }
 
 func TestApiEvents_Integration(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
 	t.Run("FullWorkflowWithCache", func(t *testing.T) {
 		server, adapter, cacheManager := createTestServerForApiEvents()
 		app := createTestAppForApiEvents()
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		// Test with cache channel
 		requestBody := payloads.PusherApiMessage{
@@ -807,9 +764,9 @@ func TestApiEvents_Integration(t *testing.T) {
 
 		req := httptest.NewRequest("POST", "/events", bytes.NewBuffer(jsonBody))
 		req.Header.Set("Content-Type", "application/json")
-		c.Request = req
+		req = withApp(req, app)
 
-		EventTrigger(c, server)
+		EventTrigger(w, req, server)
 
 		// Check response
 		assert.Equal(t, http.StatusOK, w.Code)
@@ -830,8 +787,6 @@ func TestApiEvents_Integration(t *testing.T) {
 		app := createTestAppForApiEvents()
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		// Create batch with different channel types
 		requestBody := BatchEventForm{
@@ -857,9 +812,9 @@ func TestApiEvents_Integration(t *testing.T) {
 
 		req := httptest.NewRequest("POST", "/batch_events", bytes.NewBuffer(jsonBody))
 		req.Header.Set("Content-Type", "application/json")
-		c.Request = req
+		req = withApp(req, app)
 
-		BatchEventTrigger(c, server)
+		BatchEventTrigger(w, req, server)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 

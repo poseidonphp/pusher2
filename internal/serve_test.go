@@ -2,14 +2,16 @@ package internal
 
 import (
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/gobwas/ws"
+	"github.com/gobwas/ws/wsutil"
 	pusherClient "github.com/pusher/pusher-http-go/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -249,14 +251,10 @@ func TestLoadWebServer(t *testing.T) {
 		server := createTestServerForServe()
 		httpServer := LoadWebServer(server)
 
-		// Test that the router is properly configured
-		router := httpServer.Handler.(*gin.Engine)
-		assert.NotNil(t, router)
-
-		// Test health check endpoint
+		// Test health check endpoint through the full middleware stack
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("GET", "/health", nil)
-		router.ServeHTTP(w, req)
+		httpServer.Handler.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 		assert.Contains(t, w.Body.String(), "ok")
@@ -625,6 +623,41 @@ func TestServeWs(t *testing.T) {
 }
 
 func TestServeWs_Integration(t *testing.T) {
+	t.Run("ThroughFullMiddlewareStack", func(t *testing.T) {
+		server := createTestServerForServe()
+		testApp := createTestAppForServe()
+
+		server.AppManager.(*MockAppManagerForServe).FindByKeyFunc = func(key string) (*apps.App, error) {
+			return testApp, nil
+		}
+		server.Adapter.(*MockAdapterForServe).GetSocketsCountFunc = func(appID constants.AppID, onlyLocal bool) int64 {
+			return 0
+		}
+
+		// The logging middleware wraps the ResponseWriter; the upgrade must still hijack the connection.
+		httpServer := httptest.NewServer(LoadWebServer(server).Handler)
+		defer httpServer.Close()
+
+		wsURL := "ws" + httpServer.URL[4:] + "/app/test-key?protocol=7"
+		conn, br, _, err := ws.DefaultDialer.Dial(context.Background(), wsURL)
+		if !assert.NoError(t, err) {
+			return
+		}
+		defer conn.Close()
+
+		// Frames sent right after the handshake may already sit in the dialer's buffer.
+		var rw io.ReadWriter = conn
+		if br != nil {
+			rw = struct {
+				io.Reader
+				io.Writer
+			}{br, conn}
+		}
+		msg, err := wsutil.ReadServerText(rw)
+		assert.NoError(t, err)
+		assert.Contains(t, string(msg), "pusher:connection_established")
+	})
+
 	t.Run("SuccessfulConnection", func(t *testing.T) {
 		server := createTestServerForServe()
 		testApp := createTestAppForServe()
@@ -731,25 +764,27 @@ func createWebSocketUpgradeRequest(url string) *http.Request {
 func TestLoadWebServer_Routes(t *testing.T) {
 	t.Run("AllRoutesRegistered", func(t *testing.T) {
 		server := createTestServerForServe()
-		httpServer := LoadWebServer(server)
-		router := httpServer.Handler.(*gin.Engine)
+		router := newRouter(server)
 
 		// Test that all expected routes are registered
 		routes := []string{
-			"POST /apps/:app_id/events",
-			"POST /apps/:app_id/batch_events",
-			"GET /apps/:app_id/channels",
-			"GET /apps/:app_id/channels/:channel_name",
-			"GET /apps/:app_id/channels/:channel_name/users",
-			"POST /apps/:app_id/users/:user_id/terminate_connections",
-			"GET /app/:key",
+			"POST /apps/{app_id}/events",
+			"POST /apps/{app_id}/batch_events",
+			"GET /apps/{app_id}/channels",
+			"GET /apps/{app_id}/channels/{channel_name}",
+			"GET /apps/{app_id}/channels/{channel_name}/users",
+			"POST /apps/{app_id}/users/{user_id}/terminate_connections",
+			"GET /app/{key}",
 			"GET /health",
 		}
 
-		// Get all registered routes
+		// Resolve a concrete request for each pattern and check it maps back to that pattern
 		registeredRoutes := make(map[string]bool)
-		for _, route := range router.Routes() {
-			registeredRoutes[route.Method+" "+route.Path] = true
+		for _, route := range routes {
+			method, path, _ := strings.Cut(route, " ")
+			path = strings.NewReplacer("{app_id}", "a", "{channel_name}", "c", "{user_id}", "u", "{key}", "k").Replace(path)
+			_, pattern := router.Handler(httptest.NewRequest(method, path, nil))
+			registeredRoutes[pattern] = true
 		}
 
 		// Check that all expected routes are registered

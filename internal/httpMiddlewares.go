@@ -1,112 +1,128 @@
 package internal
 
 import (
+	"context"
 	"fmt"
 	"math"
+	"net"
 	"net/http"
+	"runtime/debug"
+	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 	"pusher/internal/apps"
 	"pusher/internal/util"
+	"pusher/log"
 )
 
-func getAppFromContext(c *gin.Context) (*apps.App, bool) {
-	app, exists := c.Get("app")
-	if !exists {
-		return nil, false
-	}
-	appTyped, ok := app.(*apps.App)
-	return appTyped, ok
+type appContextKey struct{}
+
+func withApp(r *http.Request, app *apps.App) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), appContextKey{}, app))
 }
 
-func AppMiddleware(server *Server) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		appID := c.Param("app_id")
-		app, err := server.AppManager.FindByID(appID)
-		if err != nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-			c.Abort()
-			return
-		}
-		c.Set("app", app)
-		c.Next()
-	}
+func getAppFromContext(r *http.Request) (*apps.App, bool) {
+	app, ok := r.Context().Value(appContextKey{}).(*apps.App)
+	return app, ok && app != nil
 }
 
-// Signature middleware validates the signature on an incoming http request
-func SignatureMiddleware(_ *Server) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		app, exists := getAppFromContext(c)
-		if !exists {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "App not found in context"})
-			c.Abort()
-			return
-		}
-
-		ok, err := util.Verify(c.Request, app.ID, app.Secret)
-		if ok {
-			c.Next()
-		} else {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
-			c.Abort()
-			return
-		}
+func AppMiddleware(server *Server) middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			app, err := server.AppManager.FindByID(r.PathValue("app_id"))
+			if err != nil {
+				writeError(w, http.StatusNotFound, err.Error())
+				return
+			}
+			next.ServeHTTP(w, withApp(r, app))
+		})
 	}
 }
 
-func CorsMiddleware(_ *Server) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.Next()
+// SignatureMiddleware validates the signature on an incoming http request
+func SignatureMiddleware(_ *Server) middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			app, exists := getAppFromContext(r)
+			if !exists {
+				writeError(w, http.StatusInternalServerError, "App not found in context")
+				return
+			}
+
+			if ok, err := util.Verify(r, app.ID, app.Secret); !ok {
+				writeError(w, http.StatusUnauthorized, err.Error())
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
 	}
 }
 
-func RateLimiterMiddleware(_ *Server) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.Next()
+func CorsMiddleware(_ *Server) middleware {
+	return func(next http.Handler) http.Handler {
+		return next
 	}
+}
+
+func RateLimiterMiddleware(_ *Server) middleware {
+	return func(next http.Handler) http.Handler {
+		return next
+	}
+}
+
+// RecoveryMiddleware turns a panic in a handler into a 500 response instead of
+// dropping the connection.
+func RecoveryMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			rec := recover()
+			if rec == nil {
+				return
+			}
+			if rec == http.ErrAbortHandler {
+				panic(rec)
+			}
+			log.Logger().Errorf("panic recovered: %v\n%s", rec, debug.Stack())
+			w.WriteHeader(http.StatusInternalServerError)
+		}()
+		next.ServeHTTP(w, r)
+	})
 }
 
 var timeFormat = "2006-01-02 15:04:05 -0700"
 
-// Logger is the logrus logger handler
-func LoggerMiddleware(logger *logrus.Logger) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// other handler can change c.Path so:
-		path := c.Request.URL.Path
-		start := time.Now()
+// LoggerMiddleware is the logrus access log handler
+func LoggerMiddleware(logger *logrus.Logger) middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			path := r.URL.Path
+			start := time.Now()
+			rec := newResponseRecorder(w)
 
-		c.Next()
+			next.ServeHTTP(rec, r)
 
-		stop := time.Since(start)
-		latency := int(math.Ceil(float64(stop.Nanoseconds()) / 1000000.0))
-		statusCode := c.Writer.Status()
-		clientIP := c.ClientIP()
-		clientUserAgent := c.Request.UserAgent()
-		referer := c.Request.Referer()
-		dataLength := c.Writer.Size()
+			stop := time.Since(start)
+			latency := int(math.Ceil(float64(stop.Nanoseconds()) / 1000000.0))
+			statusCode := rec.Status()
+			clientIP := clientIP(r)
+			clientUserAgent := r.UserAgent()
+			referer := r.Referer()
+			dataLength := rec.size
 
-		if dataLength < 0 {
-			dataLength = 0
-		}
+			entry := logger.WithFields(logrus.Fields{
+				"statusCode": statusCode,
+				"latency":    latency, // time to process
+				"clientIP":   clientIP,
+				"method":     r.Method,
+				"path":       path,
+				"referer":    referer,
+				"dataLength": dataLength,
+				"userAgent":  clientUserAgent,
+				"req_at":     start.Format(timeFormat),
+			})
 
-		entry := logger.WithFields(logrus.Fields{
-			"statusCode": statusCode,
-			"latency":    latency, // time to process
-			"clientIP":   clientIP,
-			"method":     c.Request.Method,
-			"path":       path,
-			"referer":    referer,
-			"dataLength": dataLength,
-			"userAgent":  clientUserAgent,
-			"req_at":     start.Format(timeFormat),
-		})
-
-		if len(c.Errors) > 0 {
-			entry.Error(c.Errors.ByType(gin.ErrorTypePrivate).String())
-		} else {
-			msg := fmt.Sprintf("%s [%s] \"%s %s\" %d %d \"%s\" \"%s\" (%dms)", clientIP, start.Format(timeFormat), c.Request.Method, path, statusCode, dataLength, referer, clientUserAgent, latency)
+			msg := fmt.Sprintf("%s [%s] \"%s %s\" %d %d \"%s\" \"%s\" (%dms)", clientIP, start.Format(timeFormat), r.Method, path, statusCode, dataLength, referer, clientUserAgent, latency)
 			if statusCode > 499 {
 				entry.Error(msg)
 			} else if statusCode > 399 {
@@ -114,6 +130,25 @@ func LoggerMiddleware(logger *logrus.Logger) gin.HandlerFunc {
 			} else {
 				entry.Info(msg)
 			}
+		})
+	}
+}
+
+// clientIP returns the originating client address for logging, preferring
+// proxy headers over the socket peer address.
+func clientIP(r *http.Request) string {
+	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+		first, _, _ := strings.Cut(forwarded, ",")
+		if ip := strings.TrimSpace(first); ip != "" {
+			return ip
 		}
 	}
+	if realIP := strings.TrimSpace(r.Header.Get("X-Real-IP")); realIP != "" {
+		return realIP
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
