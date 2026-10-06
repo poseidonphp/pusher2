@@ -207,13 +207,14 @@ func (w *WebSocket) WatchForAuthentication() {
 	}
 
 	w.userAuthChannel = make(chan bool, 1)
+	timeout := w.app.AuthorizationTimeout
 	w.mutex.Unlock()
 
 	// set a timeout for the user auth Channel. Listen for the timeout;
 	// if the userAuthChannel is closed before the timeout, close the Channel and stop the time
 	// if the timer expires, close the websocket
 	go func() {
-		timer := time.NewTimer(w.app.AuthorizationTimeout)
+		timer := time.NewTimer(timeout)
 		defer timer.Stop()
 
 		select {
