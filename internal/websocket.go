@@ -12,6 +12,7 @@ import (
 	"pusher/internal/apps"
 	"pusher/internal/cache"
 
+	"github.com/gobwas/ws"
 	"github.com/gobwas/ws/wsutil"
 
 	pusherClient "github.com/pusher/pusher-http-go/v5"
@@ -35,6 +36,7 @@ type WebSocket struct {
 	userID             string
 	userAuthChannel    chan bool
 	userHasAuthorized  bool
+	peerClosed         bool // the client closed the connection; nothing more can be sent
 
 	// adding new to support gowab websocket
 	connReader *wsutil.Reader
@@ -155,6 +157,14 @@ func (w *WebSocket) Listen() {
 			return
 		}
 
+		if header.OpCode.IsControl() {
+			if err = w.handleControlFrame(header, w.connReader); err != nil {
+				w.handleReadMessageError(err)
+				return
+			}
+			continue
+		}
+
 		if header.Length > (constants.MaxMessageSize) {
 			w.errorf("Message too large: %d bytes", header.Length)
 			return
@@ -253,12 +263,12 @@ func (w *WebSocket) Cleanup() {
 	w.PresenceData = nil
 	w.SubscribedChannels = nil
 
-	// Any other cleanup needed
+	// Any other cleanup needed. app and server are shared, long-lived objects;
+	// they are kept so goroutines still finishing (Listen, the auth watcher)
+	// never dereference nil.
 	w.ID = ""
-	w.app = nil
 	w.conn = nil
 	w.closed = true
-	w.server = nil
 	w.userID = ""
 	w.userHasAuthorized = false
 }
@@ -288,17 +298,17 @@ func (w *WebSocket) closeConnection(code util.ErrorCode) {
 	}
 
 	if w.conn != nil {
-		w.tracef("sending connection close message to client")
-		w.Send(payloads.ErrorPack(code, "closing connection"))
-		time.Sleep(600 * time.Millisecond)
-		err := w.conn.Close()
-		if err != nil {
-			w.errorf("Error closing connection: %s", err)
-		} else {
-			time.Sleep(600 * time.Millisecond)
-			w.conn = nil
+		if !w.peerClosed {
+			w.tracef("sending connection close message to client")
+			w.Send(payloads.ErrorPack(code, "closing connection"))
+			// The close frame carries the Pusher error code; pusher-js uses it to
+			// decide whether and how quickly to reconnect.
+			w.writeCloseFrame(code, "closing connection")
 		}
-
+		if err := w.conn.Close(); err != nil {
+			w.errorf("Error closing connection: %s", err)
+		}
+		w.conn = nil
 	}
 
 	if w.closed {
@@ -476,6 +486,34 @@ func (w *WebSocket) handlePresenceChannelSubscription(channelObj *Channel, joinR
 	return nil
 }
 
+// handleControlFrame answers ping and close frames from the client. On a close
+// frame it replies with a close frame and returns a wsutil.ClosedError.
+func (w *WebSocket) handleControlFrame(header ws.Header, r io.Reader) error {
+	return wsutil.ControlFrameHandler(controlFrameWriter{w}, ws.StateServerSide)(header, r)
+}
+
+// writeCloseFrame sends a websocket close frame with the given status code.
+func (w *WebSocket) writeCloseFrame(code util.ErrorCode, reason string) {
+	frame := ws.NewCloseFrame(ws.NewCloseFrameBody(ws.StatusCode(code), reason))
+	_ = ws.WriteFrame(controlFrameWriter{w}, frame)
+}
+
+// controlFrameWriter writes control frames straight to the connection,
+// serialized with Send so frames never interleave on the wire.
+type controlFrameWriter struct {
+	w *WebSocket
+}
+
+func (c controlFrameWriter) Write(p []byte) (int, error) {
+	c.w.sendMutex.Lock()
+	defer c.w.sendMutex.Unlock()
+	if c.w.conn == nil {
+		return 0, net.ErrClosed
+	}
+	_ = c.w.conn.SetWriteDeadline(time.Now().Add(constants.WriteWait))
+	return c.w.conn.Write(p)
+}
+
 // handleReadMessageError processes WebSocket read errors
 // Differentiates between expected and unexpected closure events
 // func (w *WebSocket) handleReadMessageError(err error) {
@@ -503,7 +541,20 @@ func (w *WebSocket) handlePresenceChannelSubscription(channelObj *Channel, joinR
 // }
 
 func (w *WebSocket) handleReadMessageError(err error) {
-	if err == io.EOF || errors.Is(err, net.ErrClosed) {
+	var closedErr wsutil.ClosedError
+	peerClosed := err == io.EOF || errors.Is(err, net.ErrClosed) || errors.As(err, &closedErr)
+
+	// closeConnection blocks here until it finishes, so a read that failed because
+	// the server closed the socket sees closed == true and stops.
+	w.mutex.Lock()
+	if w.closed {
+		w.mutex.Unlock()
+		return
+	}
+	w.peerClosed = peerClosed
+	w.mutex.Unlock()
+
+	if peerClosed {
 		w.tracef("Connection closed by client: %s", err.Error())
 		if w.server.MetricsManager != nil {
 			w.server.MetricsManager.MarkError("websocket_expected_closure", w.app.ID)

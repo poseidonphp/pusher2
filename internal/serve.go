@@ -177,7 +177,7 @@ func createWebSocket(socketID constants.SocketID, conn net.Conn, server *Server,
 		return nil
 	}
 
-	return &WebSocket{
+	socket := &WebSocket{
 		ID:                 socketID,
 		conn:               conn,
 		closed:             false,
@@ -188,6 +188,9 @@ func createWebSocket(socketID constants.SocketID, conn net.Conn, server *Server,
 		connReader:         wsutil.NewReader(conn, ws.StateServerSide),
 		connWriter:         wsutil.NewWriter(conn, ws.StateServerSide, ws.OpText),
 	}
+	// Answer pings and closes that arrive between fragments of a message.
+	socket.connReader.OnIntermediate = socket.handleControlFrame
+	return socket
 }
 
 // addSocketToAdapter adds the socket to the server's adapter

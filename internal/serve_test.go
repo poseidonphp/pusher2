@@ -793,3 +793,89 @@ func TestLoadWebServer_Routes(t *testing.T) {
 		}
 	})
 }
+
+// dialTestSocket connects a client through the full HTTP stack and consumes the
+// connection_established message. It returns the client reader/writer and the
+// server-side socket.
+func dialTestSocket(t *testing.T) (net.Conn, io.ReadWriter, *WebSocket) {
+	t.Helper()
+	server := createTestServerForServe()
+	testApp := createTestAppForServe()
+	server.AppManager.(*MockAppManagerForServe).FindByKeyFunc = func(key string) (*apps.App, error) {
+		return testApp, nil
+	}
+	server.Adapter.(*MockAdapterForServe).GetSocketsCountFunc = func(appID constants.AppID, onlyLocal bool) int64 {
+		return 0
+	}
+
+	httpServer := httptest.NewServer(LoadWebServer(server).Handler)
+	t.Cleanup(httpServer.Close)
+
+	conn, br, _, err := ws.DefaultDialer.Dial(context.Background(), "ws"+httpServer.URL[4:]+"/app/test-key?protocol=7")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+
+	var rw io.ReadWriter = conn
+	if br != nil {
+		rw = struct {
+			io.Reader
+			io.Writer
+		}{br, conn}
+	}
+	msg, err := wsutil.ReadServerText(rw)
+	require.NoError(t, err)
+	require.Contains(t, string(msg), "pusher:connection_established")
+
+	sockets := server.Adapter.(*MockAdapterForServe).AddedSockets[testApp.ID]
+	require.Len(t, sockets, 1)
+	return conn, rw, sockets[0]
+}
+
+func TestWebSocketControlFrames(t *testing.T) {
+	t.Run("PingGetsPong", func(t *testing.T) {
+		conn, rw, _ := dialTestSocket(t)
+
+		require.NoError(t, wsutil.WriteClientMessage(conn, ws.OpPing, []byte("hi")))
+
+		frame, err := ws.ReadFrame(rw)
+		require.NoError(t, err)
+		assert.Equal(t, ws.OpPong, frame.Header.OpCode)
+		assert.Equal(t, "hi", string(frame.Payload))
+	})
+
+	t.Run("ClientCloseGetsCloseReply", func(t *testing.T) {
+		conn, rw, _ := dialTestSocket(t)
+
+		body := ws.NewCloseFrameBody(ws.StatusNormalClosure, "bye")
+		require.NoError(t, wsutil.WriteClientMessage(conn, ws.OpClose, body))
+
+		frame, err := ws.ReadFrame(rw)
+		require.NoError(t, err)
+		assert.Equal(t, ws.OpClose, frame.Header.OpCode)
+		code, _ := ws.ParseCloseFrameData(frame.Payload)
+		assert.Equal(t, ws.StatusNormalClosure, code)
+
+		// No pusher:error or second close frame after the handshake completes.
+		_, err = ws.ReadFrame(rw)
+		assert.Error(t, err)
+	})
+
+	t.Run("ServerCloseSendsPusherCode", func(t *testing.T) {
+		_, rw, socket := dialTestSocket(t)
+
+		go socket.closeConnection(util.ErrCodeUnauthorizedConnection)
+
+		frame, err := ws.ReadFrame(rw)
+		require.NoError(t, err)
+		assert.Equal(t, ws.OpText, frame.Header.OpCode)
+		assert.Contains(t, string(frame.Payload), "pusher:error")
+
+		frame, err = ws.ReadFrame(rw)
+		require.NoError(t, err)
+		assert.Equal(t, ws.OpClose, frame.Header.OpCode)
+		code, reason := ws.ParseCloseFrameData(frame.Payload)
+		assert.Equal(t, ws.StatusCode(util.ErrCodeUnauthorizedConnection), code)
+		assert.Equal(t, "closing connection", reason)
+	})
+}
