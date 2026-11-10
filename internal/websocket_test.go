@@ -14,6 +14,7 @@ import (
 	"pusher/internal/apps"
 	"pusher/internal/config"
 	"pusher/internal/constants"
+	"pusher/internal/logger"
 	"pusher/internal/payloads"
 	"pusher/internal/util"
 
@@ -54,6 +55,7 @@ func createTestServer(t *testing.T) (*Server, context.CancelFunc) {
 		Applications:   []apps.App{*app},
 		MetricsEnabled: false,
 		QueueDriver:    "local",
+		Logger:         logger.NewAppLogger(),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -497,7 +499,7 @@ func TestPresenceChannelSubscription(t *testing.T) {
 	assert.Equal(t, constants.PusherInternalSubscriptionSucceeded, response.Event)
 
 	// Parse the data to verify presence data
-	var data map[string]interface{}
+	var data map[string]any
 	err = json.Unmarshal([]byte(response.Data), &data)
 	require.NoError(t, err)
 	assert.Contains(t, data, "presence")
@@ -1004,7 +1006,7 @@ func TestConcurrentConnections(t *testing.T) {
 	connections := make([]net.Conn, numConnections)
 	writers := make([]*wsutil.Writer, numConnections)
 
-	for i := 0; i < numConnections; i++ {
+	for i := range numConnections {
 		conn, _, writer := createWebSocketConnection(t, httpServer.URL)
 		connections[i] = conn
 		writers[i] = writer
@@ -1015,7 +1017,7 @@ func TestConcurrentConnections(t *testing.T) {
 	}
 
 	// All connections should be alive
-	for i := 0; i < numConnections; i++ {
+	for i := range numConnections {
 		pingMessage := payloads.PayloadPack(constants.PusherPing, "")
 		sendMessage(t, writers[i], pingMessage)
 

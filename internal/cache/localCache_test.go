@@ -1,7 +1,6 @@
 package cache
 
 import (
-	"context"
 	"sync"
 	"testing"
 	"time"
@@ -15,8 +14,7 @@ import (
 
 func TestLocalCacheInit(t *testing.T) {
 	cache := &LocalCache{}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	err := cache.Init(ctx)
 	assert.NoError(t, err)
 	assert.NotNil(t, cache.cacheItems)
@@ -24,8 +22,7 @@ func TestLocalCacheInit(t *testing.T) {
 
 func TestLocalCacheSetAndGet(t *testing.T) {
 	cache := &LocalCache{}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	_ = cache.Init(ctx)
 
 	// Test basic set and get
@@ -41,8 +38,7 @@ func TestLocalCacheSetAndGet(t *testing.T) {
 
 func TestLocalCacheSetExWithExpiration(t *testing.T) {
 	cache := &LocalCache{}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	_ = cache.Init(ctx)
 
 	// Set with short expiration
@@ -63,8 +59,7 @@ func TestLocalCacheSetExWithExpiration(t *testing.T) {
 
 func TestLocalCacheDelete(t *testing.T) {
 	cache := &LocalCache{}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	_ = cache.Init(ctx)
 
 	// Set and then delete
@@ -80,8 +75,7 @@ func TestLocalCacheDelete(t *testing.T) {
 
 func TestLocalCacheHas(t *testing.T) {
 	cache := &LocalCache{}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	_ = cache.Init(ctx)
 
 	// Test with non-existent key
@@ -99,8 +93,7 @@ func TestLocalCacheHas(t *testing.T) {
 
 func TestLocalCacheUpdate(t *testing.T) {
 	cache := &LocalCache{}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	_ = cache.Init(ctx)
 
 	// Update non-existent key should do nothing
@@ -118,8 +111,7 @@ func TestLocalCacheUpdate(t *testing.T) {
 
 func TestLocalCacheRemember(t *testing.T) {
 	cache := &LocalCache{}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	_ = cache.Init(ctx)
 
 	// Test with callback that returns a value
@@ -156,8 +148,7 @@ func TestLocalCacheRemember(t *testing.T) {
 
 func TestCleanupJob_Function(t *testing.T) {
 	cache := &LocalCache{}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	_ = cache.Init(ctx)
 
 	// Add items with different expiration times
@@ -228,8 +219,7 @@ func TestCleanupJob_Function(t *testing.T) {
 
 func TestCleanupJob_EmptyCache(t *testing.T) {
 	cache := &LocalCache{}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	_ = cache.Init(ctx)
 
 	// Simulate cleanupJob on empty cache
@@ -248,8 +238,7 @@ func TestCleanupJob_EmptyCache(t *testing.T) {
 
 func TestCleanupJob_OnlyPermanentItems(t *testing.T) {
 	cache := &LocalCache{}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	_ = cache.Init(ctx)
 
 	// Add only permanent items (nil expireAt)
@@ -273,8 +262,7 @@ func TestCleanupJob_OnlyPermanentItems(t *testing.T) {
 
 func TestCleanupJob_AllExpiredItems(t *testing.T) {
 	cache := &LocalCache{}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	_ = cache.Init(ctx)
 
 	now := time.Now()
@@ -314,8 +302,7 @@ func TestCleanupJob_AllExpiredItems(t *testing.T) {
 
 func TestCleanupJob_ConcurrentModification(t *testing.T) {
 	cache := &LocalCache{}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	_ = cache.Init(ctx)
 
 	// Add some items
@@ -332,7 +319,7 @@ func TestCleanupJob_ConcurrentModification(t *testing.T) {
 	// Goroutine 1: Add new items
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			cache.Set("concurrent_key_"+string(rune(i)), "value")
 			time.Sleep(1 * time.Millisecond)
 		}
@@ -360,8 +347,7 @@ func TestCleanupJob_ConcurrentModification(t *testing.T) {
 
 func TestCleanupJob_EdgeCases(t *testing.T) {
 	cache := &LocalCache{}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	_ = cache.Init(ctx)
 
 	now := time.Now()
@@ -416,8 +402,7 @@ func TestCleanupJob_EdgeCases(t *testing.T) {
 
 func TestLocalCacheExpirationIntegration(t *testing.T) {
 	cache := &LocalCache{}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	_ = cache.Init(ctx)
 
 	// Set with infinite TTL (nil expireAt)
@@ -444,8 +429,7 @@ func TestLocalCacheExpirationIntegration(t *testing.T) {
 
 func TestLocalCacheMultipleOperations(t *testing.T) {
 	cache := &LocalCache{}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	_ = cache.Init(ctx)
 
 	// Set multiple items

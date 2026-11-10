@@ -10,15 +10,14 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
-	"github.com/sirupsen/logrus"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"pusher/internal/apps"
+	"pusher/internal/logger"
 
 	"pusher/internal/cache"
 	"pusher/internal/clients"
 	"pusher/internal/constants"
-	"pusher/log"
 )
 
 // Version of the application, set at build time via -ldflags "-X 'internal.Version=x.y.z'"
@@ -31,26 +30,27 @@ var Version string = "unknown"
 // }
 
 type ServerConfig struct {
-	ctx                    *context.Context     `mapstructure:"-"`
-	Env                    string               `mapstructure:"app_env"`
-	Port                   string               `mapstructure:"port"`
-	BindAddress            string               `mapstructure:"bind_address"`
-	AppManager             string               `mapstructure:"app_manager"`
-	AdapterDriver          string               `mapstructure:"adapter_driver"`
-	QueueDriver            string               `mapstructure:"queue_driver"`
-	ChannelCacheDriver     string               `mapstructure:"cache_driver"`
-	ChannelCacheManager    cache.CacheContract  `mapstructure:"-" json:"-"`
-	UsingRedis             bool                 `mapstructure:"-" json:"-"`
-	RedisInstance          *clients.RedisClient `mapstructure:"-" json:"-"`
-	RedisPrefix            string               `mapstructure:"redis_prefix"`
-	LogLevel               string               `mapstructure:"log_level"`
-	RedisUrl               string               `mapstructure:"redis_url"`
-	RedisTls               bool                 `mapstructure:"redis_tls"`
-	RedisClusterMode       bool                 `mapstructure:"redis_cluster_mode"`
-	IgnoreLoggerMiddleware bool                 `mapstructure:"ignore_logger_middleware"`
-	MetricsEnabled         bool                 `mapstructure:"metrics_enabled"`
-	MetricsPort            string               `mapstructure:"metrics_port"`
-	Applications           []apps.App           `mapstructure:"applications"`
+	ctx                    *context.Context        `mapstructure:"-"`
+	Env                    string                  `mapstructure:"app_env"`
+	Port                   string                  `mapstructure:"port"`
+	BindAddress            string                  `mapstructure:"bind_address"`
+	AppManager             string                  `mapstructure:"app_manager"`
+	AdapterDriver          string                  `mapstructure:"adapter_driver"`
+	QueueDriver            string                  `mapstructure:"queue_driver"`
+	ChannelCacheDriver     string                  `mapstructure:"cache_driver"`
+	ChannelCacheManager    cache.CacheContract     `mapstructure:"-" json:"-"`
+	UsingRedis             bool                    `mapstructure:"-" json:"-"`
+	RedisInstance          *clients.RedisClient    `mapstructure:"-" json:"-"`
+	RedisPrefix            string                  `mapstructure:"redis_prefix"`
+	LogLevel               string                  `mapstructure:"log_level"`
+	Logger                 logger.LoggingInterface `mapstructure:"-" json:"-"`
+	RedisUrl               string                  `mapstructure:"redis_url"`
+	RedisTls               bool                    `mapstructure:"redis_tls"`
+	RedisClusterMode       bool                    `mapstructure:"redis_cluster_mode"`
+	IgnoreLoggerMiddleware bool                    `mapstructure:"ignore_logger_middleware"`
+	MetricsEnabled         bool                    `mapstructure:"metrics_enabled"`
+	MetricsPort            string                  `mapstructure:"metrics_port"`
+	Applications           []apps.App              `mapstructure:"applications"`
 }
 
 func isTest() bool {
@@ -148,6 +148,12 @@ func InitializeServerConfig(_ *context.Context) (*ServerConfig, error) {
 		os.Exit(0)
 	}
 
+	// Create the logger instance
+	logInstance := logger.NewAppLogger(logger.WithLogLevel("info"), logger.WithFieldColors(map[string]string{
+		"channel": "blue",
+		"event":   "green",
+	}))
+
 	// 3) Figure out which .env to load (if any) and load it
 	if !isTest() || os.Getenv("TEST_WITH_ENV_FILE") == "true" {
 		envFile := pflag.Lookup("env-file").Value.String()
@@ -185,7 +191,7 @@ func InitializeServerConfig(_ *context.Context) (*ServerConfig, error) {
 		if err := viper.ReadInConfig(); err != nil {
 			return nil, fmt.Errorf("error reading config file: %v", err)
 		} else {
-			log.Logger().Infoln("Using config file:", viper.ConfigFileUsed())
+			logInstance.Infof("Using config file: %s\n", viper.ConfigFileUsed())
 		}
 	}
 
@@ -366,7 +372,7 @@ func InitializeServerConfig(_ *context.Context) (*ServerConfig, error) {
 	// 9) If UsingRedis is true, initialize the Redis client
 	// and assign it to RedisInstance
 	if cfg.UsingRedis {
-		log.Logger().Infoln("Initializing Redis client")
+		logInstance.Info("Initializing Redis client\n")
 		client := &clients.RedisClient{Prefix: cfg.RedisPrefix}
 		err := client.InitRedis(cfg.RedisUrl, cfg.RedisClusterMode, cfg.RedisTls)
 		if err != nil {
@@ -375,12 +381,9 @@ func InitializeServerConfig(_ *context.Context) (*ServerConfig, error) {
 		cfg.RedisInstance = client
 	}
 
-	// 10) Set up the logger
-	lvl, _ := logrus.ParseLevel(cfg.LogLevel)
-	log.Logger().SetLevel(lvl)
-	if cfg.Env != constants.PRODUCTION {
-		log.Logger().SetFormatter(&logrus.TextFormatter{})
-	}
+	// 10) Set the logger level based on the configuration
+	logInstance.SetLogLevel(cfg.LogLevel)
+	cfg.Logger = logInstance
 
 	return &cfg, nil
 }

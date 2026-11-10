@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sirupsen/logrus"
 	"pusher/internal/apps"
+	"pusher/internal/logger"
 	"pusher/internal/util"
 	"pusher/log"
 )
@@ -92,8 +92,8 @@ func RecoveryMiddleware(next http.Handler) http.Handler {
 
 var timeFormat = "2006-01-02 15:04:05 -0700"
 
-// LoggerMiddleware is the logrus access log handler
-func LoggerMiddleware(logger *logrus.Logger) middleware {
+// LoggerMiddleware is the logger access log handler
+func LoggerMiddleware(logger logger.LoggingInterface) middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			path := r.URL.Path
@@ -110,7 +110,7 @@ func LoggerMiddleware(logger *logrus.Logger) middleware {
 			referer := r.Referer()
 			dataLength := rec.size
 
-			entry := logger.WithFields(logrus.Fields{
+			entry := logger.WithFields(map[string]any{
 				"statusCode": statusCode,
 				"latency":    latency, // time to process
 				"clientIP":   clientIP,

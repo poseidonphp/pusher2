@@ -3,6 +3,7 @@ package internal
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"time"
 
 	"pusher/internal/constants"
@@ -548,9 +549,7 @@ func (ha *HorizontalAdapter) onRequest(channel string, msg string) (dataToSend [
 		localChannels := ha.GetChannels(appId, true)
 
 		var channels map[constants.ChannelName][]constants.SocketID
-		for ch, sockets := range localChannels {
-			channels[ch] = sockets
-		}
+		maps.Copy(channels, localChannels)
 
 		_data2 := &HorizontalResponse{
 			RequestID: request.RequestID,
@@ -835,9 +834,7 @@ func (ha *HorizontalAdapter) waitForResponse(request *HorizontalRequest) {
 				case CHANNEL_MEMBERS:
 					log.Logger().Warnf("Received CHANNEL_MEMBERS response: %v", response)
 					if response.Members != nil {
-						for id, member := range response.Members {
-							finalResponse.Members[id] = member
-						}
+						maps.Copy(finalResponse.Members, response.Members)
 					}
 				case SOCKETS_COUNT:
 					if response.TotalCount != 0 {

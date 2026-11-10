@@ -652,7 +652,7 @@ func TestWebhookSender_Integration(t *testing.T) {
 		}
 
 		// Send multiple webhooks
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			queuedJobData := &QueuedJobData{
 				Webhook: &constants.Webhook{
 					URL: "https://example.com/webhook",
@@ -692,7 +692,7 @@ func TestWebhookSender_Integration(t *testing.T) {
 		const numGoroutines = 10
 		done := make(chan bool, numGoroutines)
 
-		for i := 0; i < numGoroutines; i++ {
+		for i := range numGoroutines {
 			go func(index int) {
 				queuedJobData := &QueuedJobData{
 					Webhook: &constants.Webhook{
@@ -720,7 +720,7 @@ func TestWebhookSender_Integration(t *testing.T) {
 		}
 
 		// Wait for all goroutines to complete
-		for i := 0; i < numGoroutines; i++ {
+		for range numGoroutines {
 			<-done
 		}
 

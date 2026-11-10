@@ -24,7 +24,7 @@ func (r *RedisClient) GetKey(key string) string {
 
 func (r *RedisClient) GetClient() redis.UniversalClient {
 	if r.Client == nil {
-		log.Logger().Errorln("Redis Client is not initialized")
+		log.Logger().Error("Redis Client is not initialized\n")
 	}
 	return r.Client
 }

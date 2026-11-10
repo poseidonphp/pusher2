@@ -209,7 +209,7 @@ func TestCheckMessageToBroadcast(t *testing.T) {
 	t.Run("TooManyChannels", func(t *testing.T) {
 		w := httptest.NewRecorder()
 		channels := make([]constants.ChannelName, 11) // More than MaxEventChannelsAtOnce (10)
-		for i := 0; i < 11; i++ {
+		for i := range 11 {
 			channels[i] = constants.ChannelName(fmt.Sprintf("channel-%d", i))
 		}
 		apiMsg := &payloads.PusherApiMessage{
@@ -396,7 +396,7 @@ func TestEventTrigger(t *testing.T) {
 
 		// Check response
 		assert.Equal(t, http.StatusOK, w.Code)
-		var response map[string]interface{}
+		var response map[string]any
 		err := json.Unmarshal(w.Body.Bytes(), &response)
 		assert.NoError(t, err)
 		assert.Empty(t, response) // Should be empty JSON object
@@ -477,7 +477,7 @@ func TestEventTrigger(t *testing.T) {
 		w := httptest.NewRecorder()
 
 		// Create request with missing required fields
-		requestBody := map[string]interface{}{
+		requestBody := map[string]any{
 			"name": "test-event",
 			// Missing data and channel
 		}
@@ -528,7 +528,7 @@ func TestBatchEventTrigger(t *testing.T) {
 		BatchEventTrigger(w, req, server)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		var response map[string]interface{}
+		var response map[string]any
 		err := json.Unmarshal(w.Body.Bytes(), &response)
 		assert.NoError(t, err)
 		assert.Empty(t, response)

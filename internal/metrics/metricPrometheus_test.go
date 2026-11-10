@@ -218,7 +218,7 @@ func TestPrometheusMetrics_ConcurrentAccess(t *testing.T) {
 
 	t.Run("ConcurrentConnections", func(t *testing.T) {
 		// Simulate concurrent connections and disconnections
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			go func() {
 				pm.MarkNewConnection(appId)
 				pm.MarkDisconnection(appId)
@@ -231,7 +231,7 @@ func TestPrometheusMetrics_ConcurrentAccess(t *testing.T) {
 
 	t.Run("ConcurrentMessages", func(t *testing.T) {
 		// Simulate concurrent message processing
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			go func() {
 				pm.MarkWsMessageSent(appId, "test-message")
 				pm.MarkWsMessageReceived(appId, "test-message")

@@ -720,10 +720,8 @@ func TestHorizontalRequestBody_ToJson(t *testing.T) {
 			Type:      SOCKETS,
 			RequestID: "test-request-id",
 			AppID:     "test-app",
-			HorizontalRequestOptions: HorizontalRequestOptions{
-				Opts: map[string]string{
-					"channel": "test-channel",
-				},
+			Opts: map[string]string{
+				"channel": "test-channel",
 			},
 		}
 
@@ -824,7 +822,7 @@ func TestHorizontalAdapter_Concurrency(t *testing.T) {
 
 		// Perform multiple get operations concurrently
 		done := make(chan bool, 10)
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			go func() {
 				sockets := adapter.GetSockets(appID, false)
 				assert.NotNil(t, sockets)
@@ -833,7 +831,7 @@ func TestHorizontalAdapter_Concurrency(t *testing.T) {
 		}
 
 		// Wait for all goroutines to complete
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			<-done
 		}
 
@@ -914,10 +912,8 @@ func TestHorizontalAdapter_OnRequest(t *testing.T) {
 			Type:      CHANNEL_SOCKETS,
 			RequestID: "test-request-2",
 			AppID:     "test-app",
-			HorizontalRequestOptions: HorizontalRequestOptions{
-				Opts: map[string]string{
-					"channel": "test-channel",
-				},
+			Opts: map[string]string{
+				"channel": "test-channel",
 			},
 		}
 		requestJSON, _ := json.Marshal(requestBody)
@@ -944,9 +940,7 @@ func TestHorizontalAdapter_OnRequest(t *testing.T) {
 			Type:      CHANNEL_SOCKETS,
 			RequestID: "test-request-3",
 			AppID:     "test-app",
-			HorizontalRequestOptions: HorizontalRequestOptions{
-				Opts: map[string]string{},
-			},
+			Opts:      map[string]string{},
 		}
 		requestJSON, _ := json.Marshal(requestBody)
 
@@ -1017,10 +1011,8 @@ func TestHorizontalAdapter_OnRequest(t *testing.T) {
 			Type:      CHANNEL_MEMBERS,
 			RequestID: "test-request-6",
 			AppID:     "test-app",
-			HorizontalRequestOptions: HorizontalRequestOptions{
-				Opts: map[string]string{
-					"channel": "test-channel",
-				},
+			Opts: map[string]string{
+				"channel": "test-channel",
 			},
 		}
 		requestJSON, _ := json.Marshal(requestBody)
@@ -1047,9 +1039,7 @@ func TestHorizontalAdapter_OnRequest(t *testing.T) {
 			Type:      CHANNEL_MEMBERS,
 			RequestID: "test-request-7",
 			AppID:     "test-app",
-			HorizontalRequestOptions: HorizontalRequestOptions{
-				Opts: map[string]string{},
-			},
+			Opts:      map[string]string{},
 		}
 		requestJSON, _ := json.Marshal(requestBody)
 
@@ -1095,10 +1085,8 @@ func TestHorizontalAdapter_OnRequest(t *testing.T) {
 			Type:      CHANNEL_MEMBERS_COUNT,
 			RequestID: "test-request-9",
 			AppID:     "test-app",
-			HorizontalRequestOptions: HorizontalRequestOptions{
-				Opts: map[string]string{
-					"channel": "test-channel",
-				},
+			Opts: map[string]string{
+				"channel": "test-channel",
 			},
 		}
 		requestJSON, _ := json.Marshal(requestBody)
@@ -1125,9 +1113,7 @@ func TestHorizontalAdapter_OnRequest(t *testing.T) {
 			Type:      CHANNEL_MEMBERS_COUNT,
 			RequestID: "test-request-10",
 			AppID:     "test-app",
-			HorizontalRequestOptions: HorizontalRequestOptions{
-				Opts: map[string]string{},
-			},
+			Opts:      map[string]string{},
 		}
 		requestJSON, _ := json.Marshal(requestBody)
 
@@ -1148,10 +1134,8 @@ func TestHorizontalAdapter_OnRequest(t *testing.T) {
 			Type:      CHANNEL_SOCKETS_COUNT,
 			RequestID: "test-request-11",
 			AppID:     "test-app",
-			HorizontalRequestOptions: HorizontalRequestOptions{
-				Opts: map[string]string{
-					"channel": "test-channel",
-				},
+			Opts: map[string]string{
+				"channel": "test-channel",
 			},
 		}
 		requestJSON, _ := json.Marshal(requestBody)
@@ -1178,9 +1162,7 @@ func TestHorizontalAdapter_OnRequest(t *testing.T) {
 			Type:      CHANNEL_SOCKETS_COUNT,
 			RequestID: "test-request-12",
 			AppID:     "test-app",
-			HorizontalRequestOptions: HorizontalRequestOptions{
-				Opts: map[string]string{},
-			},
+			Opts:      map[string]string{},
 		}
 		requestJSON, _ := json.Marshal(requestBody)
 
@@ -1201,11 +1183,9 @@ func TestHorizontalAdapter_OnRequest(t *testing.T) {
 			Type:      SOCKET_EXISTS_IN_CHANNEL,
 			RequestID: "test-request-13",
 			AppID:     "test-app",
-			HorizontalRequestOptions: HorizontalRequestOptions{
-				Opts: map[string]string{
-					"channel":  "test-channel",
-					"socketId": "socket-123",
-				},
+			Opts: map[string]string{
+				"channel":  "test-channel",
+				"socketId": "socket-123",
 			},
 		}
 		requestJSON, _ := json.Marshal(requestBody)
@@ -1232,10 +1212,8 @@ func TestHorizontalAdapter_OnRequest(t *testing.T) {
 			Type:      SOCKET_EXISTS_IN_CHANNEL,
 			RequestID: "test-request-14",
 			AppID:     "test-app",
-			HorizontalRequestOptions: HorizontalRequestOptions{
-				Opts: map[string]string{
-					"socketId": "socket-123",
-				},
+			Opts: map[string]string{
+				"socketId": "socket-123",
 			},
 		}
 		requestJSON, _ := json.Marshal(requestBody)
@@ -1257,10 +1235,8 @@ func TestHorizontalAdapter_OnRequest(t *testing.T) {
 			Type:      SOCKET_EXISTS_IN_CHANNEL,
 			RequestID: "test-request-15",
 			AppID:     "test-app",
-			HorizontalRequestOptions: HorizontalRequestOptions{
-				Opts: map[string]string{
-					"channel": "test-channel",
-				},
+			Opts: map[string]string{
+				"channel": "test-channel",
 			},
 		}
 		requestJSON, _ := json.Marshal(requestBody)
@@ -1282,10 +1258,8 @@ func TestHorizontalAdapter_OnRequest(t *testing.T) {
 			Type:      TERMINATE_USER_CONNECTIONS,
 			RequestID: "test-request-16",
 			AppID:     "test-app",
-			HorizontalRequestOptions: HorizontalRequestOptions{
-				Opts: map[string]string{
-					"userId": "user-123",
-				},
+			Opts: map[string]string{
+				"userId": "user-123",
 			},
 		}
 		requestJSON, _ := json.Marshal(requestBody)
@@ -1307,9 +1281,7 @@ func TestHorizontalAdapter_OnRequest(t *testing.T) {
 			Type:      TERMINATE_USER_CONNECTIONS,
 			RequestID: "test-request-17",
 			AppID:     "test-app",
-			HorizontalRequestOptions: HorizontalRequestOptions{
-				Opts: map[string]string{},
-			},
+			Opts:      map[string]string{},
 		}
 		requestJSON, _ := json.Marshal(requestBody)
 

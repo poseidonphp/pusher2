@@ -320,7 +320,7 @@ func (w *WebSocket) closeConnection(code util.ErrorCode) {
 
 // errorf logs a message at the error level, including the socket ID for context.
 // This provides consistent error logging with socket identification for debugging.
-func (w *WebSocket) errorf(format string, args ...interface{}) {
+func (w *WebSocket) errorf(format string, args ...any) {
 	// log error
 	msg := fmt.Sprintf(format, args...)
 	log.Logger().Errorf("[%s] %s", w.ID, msg)
@@ -328,7 +328,7 @@ func (w *WebSocket) errorf(format string, args ...interface{}) {
 
 // debugf logs a message at the debug level, including the socket ID for context.
 // This provides consistent error logging with socket identification for debugging.
-func (w *WebSocket) debugf(format string, args ...interface{}) {
+func (w *WebSocket) debugf(format string, args ...any) {
 	// log error
 	msg := fmt.Sprintf(format, args...)
 	log.Logger().Debugf("[%s] %s", w.ID, msg)
@@ -931,7 +931,7 @@ func (w *WebSocket) subscribeToUserChannel() {
 
 // tracef logs a message at the trace level, including the socket ID for context.
 // This provides consistent trace logging with socket identification for debugging.
-func (w *WebSocket) tracef(format string, args ...interface{}) {
+func (w *WebSocket) tracef(format string, args ...any) {
 	// log error
 	msg := fmt.Sprintf(format, args...)
 	log.Logger().Tracef("[%s] %s", w.ID, msg)

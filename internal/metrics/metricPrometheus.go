@@ -450,7 +450,7 @@ func (pm *PrometheusMetrics) GetMetricsAsPlainText() string {
 
 func (pm *PrometheusMetrics) GetMetricsAsJson() []byte {
 	// Collect all metrics and return as JSON
-	metrics := make(map[string]interface{})
+	metrics := make(map[string]any)
 
 	// This is a simplified version - in practice, you'd collect from the registry
 	metrics["timestamp"] = time.Now().Unix()

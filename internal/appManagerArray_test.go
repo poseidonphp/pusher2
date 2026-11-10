@@ -157,7 +157,7 @@ func TestArrayAppManager_GetAllApps(t *testing.T) {
 
 		// Test concurrent access to GetAllApps
 		done := make(chan bool, 10)
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			go func() {
 				allApps := manager.GetAllApps()
 				assert.Len(t, allApps, 3)
@@ -166,7 +166,7 @@ func TestArrayAppManager_GetAllApps(t *testing.T) {
 		}
 
 		// Wait for all goroutines to complete
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			<-done
 		}
 	})
@@ -215,7 +215,7 @@ func TestArrayAppManager_GetAppSecret(t *testing.T) {
 
 		// Test concurrent access to GetAppSecret
 		done := make(chan bool, 10)
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			go func() {
 				secret, err := manager.GetAppSecret("app1")
 				assert.NoError(t, err)
@@ -225,7 +225,7 @@ func TestArrayAppManager_GetAppSecret(t *testing.T) {
 		}
 
 		// Wait for all goroutines to complete
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			<-done
 		}
 	})
@@ -277,7 +277,7 @@ func TestArrayAppManager_FindByID(t *testing.T) {
 
 		// Test concurrent access to FindByID
 		done := make(chan bool, 10)
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			go func() {
 				app, err := manager.FindByID("app1")
 				assert.NoError(t, err)
@@ -288,7 +288,7 @@ func TestArrayAppManager_FindByID(t *testing.T) {
 		}
 
 		// Wait for all goroutines to complete
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			<-done
 		}
 	})
@@ -361,7 +361,7 @@ func TestArrayAppManager_FindByKey(t *testing.T) {
 
 		// Test concurrent access to FindByKey
 		done := make(chan bool, 10)
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			go func() {
 				app, err := manager.FindByKey("key1")
 				assert.NoError(t, err)
@@ -372,7 +372,7 @@ func TestArrayAppManager_FindByKey(t *testing.T) {
 		}
 
 		// Wait for all goroutines to complete
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			<-done
 		}
 	})
@@ -506,7 +506,7 @@ func TestArrayAppManager_Performance(t *testing.T) {
 
 		// Create a large number of apps
 		largeApps := make([]apps.App, 1000)
-		for i := 0; i < 1000; i++ {
+		for i := range 1000 {
 			largeApps[i] = createTestAppForArrayManager(
 				fmt.Sprintf("app-%d", i),
 				fmt.Sprintf("key-%d", i),
@@ -539,7 +539,7 @@ func TestArrayAppManager_Performance(t *testing.T) {
 		done := make(chan bool, 30)
 
 		// 10 goroutines calling GetAllApps
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			go func() {
 				allApps := manager.GetAllApps()
 				assert.Len(t, allApps, 3)
@@ -548,7 +548,7 @@ func TestArrayAppManager_Performance(t *testing.T) {
 		}
 
 		// 10 goroutines calling GetAppSecret
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			go func() {
 				secret, err := manager.GetAppSecret("app1")
 				assert.NoError(t, err)
@@ -558,7 +558,7 @@ func TestArrayAppManager_Performance(t *testing.T) {
 		}
 
 		// 10 goroutines calling FindByKey
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			go func() {
 				app, err := manager.FindByKey("key1")
 				assert.NoError(t, err)
@@ -568,7 +568,7 @@ func TestArrayAppManager_Performance(t *testing.T) {
 		}
 
 		// Wait for all goroutines to complete
-		for i := 0; i < 30; i++ {
+		for range 30 {
 			<-done
 		}
 	})

@@ -21,7 +21,7 @@ func TestFileExists(t *testing.T) {
 
 func TestGenerateSocketID(t *testing.T) {
 	// Test multiple socket IDs to ensure they follow the pattern
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		socketID := GenerateSocketID()
 
 		// Check that it's not empty

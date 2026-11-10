@@ -625,7 +625,7 @@ func TestHttpWebhook_Send_Integration(t *testing.T) {
 		const numRequests = 10
 		errors := make(chan error, numRequests)
 
-		for i := 0; i < numRequests; i++ {
+		for i := range numRequests {
 			go func(index int) {
 				webhook := pusherClient.Webhook{
 					TimeMs: int(time.Now().UnixMilli()),
@@ -644,7 +644,7 @@ func TestHttpWebhook_Send_Integration(t *testing.T) {
 		}
 
 		// Collect results
-		for i := 0; i < numRequests; i++ {
+		for range numRequests {
 			err := <-errors
 			assert.NoError(t, err)
 		}

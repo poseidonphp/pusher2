@@ -33,7 +33,7 @@ import (
 func LoadWebServer(server *Server) *http.Server {
 	webServer := &http.Server{
 		Addr:    server.config.BindAddress + ":" + server.config.Port,
-		Handler: chain(newRouter(server), LoggerMiddleware(log.Logger()), RecoveryMiddleware),
+		Handler: chain(newRouter(server), LoggerMiddleware(server.Logger), RecoveryMiddleware),
 	}
 	return webServer
 }

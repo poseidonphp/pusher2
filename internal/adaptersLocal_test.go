@@ -711,7 +711,7 @@ func TestConcurrentOperations(t *testing.T) {
 	numGoroutines := 50
 
 	// Test concurrent socket additions
-	for i := 0; i < numGoroutines; i++ {
+	for i := range numGoroutines {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
