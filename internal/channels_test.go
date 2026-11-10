@@ -311,7 +311,7 @@ func TestChannel_Join(t *testing.T) {
 
 		// Create large member data (over 1KB)
 		largeUserInfo := make(map[string]string, 200)
-		for i := 0; i < 200; i++ {
+		for i := range 200 {
 			largeUserInfo[fmt.Sprintf("field%d", i)] = "this is a very long string that will make the data exceed 1KB limit"
 		}
 		memberDataBytes, _ := json.Marshal(pusherClient.MemberData{
@@ -570,7 +570,7 @@ func TestChannel_ConcurrentAccess(t *testing.T) {
 		const numGoroutines = 10
 		done := make(chan bool, numGoroutines)
 
-		for i := 0; i < numGoroutines; i++ {
+		for i := range numGoroutines {
 			go func(id int) {
 				ws := &WebSocket{ID: constants.SocketID(fmt.Sprintf("socket-%d", id))}
 				message := payloads.SubscribePayload{
@@ -585,7 +585,7 @@ func TestChannel_ConcurrentAccess(t *testing.T) {
 		}
 
 		// Wait for all goroutines to complete
-		for i := 0; i < numGoroutines; i++ {
+		for range numGoroutines {
 			<-done
 		}
 	})

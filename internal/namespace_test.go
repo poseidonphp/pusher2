@@ -762,7 +762,7 @@ func TestConcurrentAddSocket(t *testing.T) {
 	var wg sync.WaitGroup
 	numGoroutines := 100
 
-	for i := 0; i < numGoroutines; i++ {
+	for i := range numGoroutines {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -785,12 +785,10 @@ func TestConcurrentAddToChannel(t *testing.T) {
 	numGoroutines := 100
 	channelName := "test-channel"
 
-	for i := 0; i < numGoroutines; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range numGoroutines {
+		wg.Go(func() {
 			ns.AddToChannel(socket, channelName)
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -805,7 +803,7 @@ func TestConcurrentAddUser(t *testing.T) {
 	var wg sync.WaitGroup
 	numGoroutines := 50
 
-	for i := 0; i < numGoroutines; i++ {
+	for i := range numGoroutines {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -959,7 +957,7 @@ func BenchmarkGetChannelsWithSocketsCount(b *testing.B) {
 	ns := createTestNamespace()
 
 	// Set up some data
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		socket := createTestWebSocket(constants.SocketID(fmt.Sprintf("socket%d", i)), "")
 		ns.AddSocket(socket)
 		ns.AddToChannel(socket, "channel1")

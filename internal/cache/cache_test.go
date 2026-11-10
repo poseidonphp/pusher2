@@ -1,7 +1,6 @@
 package cache
 
 import (
-	"context"
 	"errors"
 	"testing"
 	"time"
@@ -34,8 +33,7 @@ func TestGetChannelCacheKey(t *testing.T) {
 
 func TestLocalCache(t *testing.T) {
 	localCache := &LocalCache{}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	_ = localCache.Init(ctx)
 
 	t.Run("SetExWithExpiration", func(t *testing.T) {
@@ -67,8 +65,7 @@ func TestRedisCache(t *testing.T) {
 		Prefix: "test",
 	}
 	t.Run("InitEmpty", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		ctx := t.Context()
 		err := redisCache.Init(ctx)
 		assert.Error(t, err)
 		assert.Equal(t, "redis Client is not initialized", err.Error())
@@ -85,8 +82,7 @@ func TestRedisCache(t *testing.T) {
 	}
 
 	t.Run("InitValid", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		ctx := t.Context()
 		err := redisCache.Init(ctx)
 		assert.NoError(t, err)
 	})

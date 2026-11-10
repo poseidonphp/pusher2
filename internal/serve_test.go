@@ -19,6 +19,7 @@ import (
 	"pusher/internal/apps"
 	"pusher/internal/config"
 	"pusher/internal/constants"
+	"pusher/internal/logger"
 	"pusher/internal/metrics"
 	"pusher/internal/util"
 )
@@ -38,7 +39,7 @@ func (m *MockAdapterForServe) Init() error {
 func (m *MockAdapterForServe) Disconnect() {
 }
 
-func (m *MockAdapterForServe) GetNamespace(appID constants.AppID) (*Namespace, error) {
+func (m *MockAdapterForServe) GetNamespace(_ constants.AppID) (*Namespace, error) {
 	return nil, nil
 }
 
@@ -46,7 +47,7 @@ func (m *MockAdapterForServe) GetNamespaces() (map[constants.AppID]*Namespace, e
 	return nil, nil
 }
 
-func (m *MockAdapterForServe) ClearNamespace(appID constants.AppID) {
+func (m *MockAdapterForServe) ClearNamespace(_ constants.AppID) {
 }
 
 func (m *MockAdapterForServe) ClearNamespaces() {
@@ -61,11 +62,11 @@ func (m *MockAdapterForServe) AddSocket(appID constants.AppID, ws *WebSocket) er
 	return m.AddSocketError
 }
 
-func (m *MockAdapterForServe) RemoveSocket(appID constants.AppID, wsID constants.SocketID) error {
+func (m *MockAdapterForServe) RemoveSocket(_ constants.AppID, _ constants.SocketID) error {
 	return nil
 }
 
-func (m *MockAdapterForServe) GetSockets(appID constants.AppID, onlyLocal bool) map[constants.SocketID]*WebSocket {
+func (m *MockAdapterForServe) GetSockets(_ constants.AppID, _ bool) map[constants.SocketID]*WebSocket {
 	return nil
 }
 
@@ -76,63 +77,63 @@ func (m *MockAdapterForServe) GetSocketsCount(appID constants.AppID, onlyLocal b
 	return 0
 }
 
-func (m *MockAdapterForServe) AddToChannel(appID constants.AppID, channelName constants.ChannelName, ws *WebSocket) (int64, error) {
+func (m *MockAdapterForServe) AddToChannel(_ constants.AppID, _ constants.ChannelName, _ *WebSocket) (int64, error) {
 	return 0, nil
 }
 
-func (m *MockAdapterForServe) RemoveFromChannel(appID constants.AppID, channels []constants.ChannelName, wsID constants.SocketID) int64 {
+func (m *MockAdapterForServe) RemoveFromChannel(_ constants.AppID, _ []constants.ChannelName, _ constants.SocketID) int64 {
 	return 0
 }
 
-func (m *MockAdapterForServe) GetChannels(appID constants.AppID, onlyLocal bool) map[constants.ChannelName][]constants.SocketID {
+func (m *MockAdapterForServe) GetChannels(_ constants.AppID, _ bool) map[constants.ChannelName][]constants.SocketID {
 	return nil
 }
 
-func (m *MockAdapterForServe) GetChannelsWithSocketsCount(appID constants.AppID, onlyLocal bool) map[constants.ChannelName]int64 {
+func (m *MockAdapterForServe) GetChannelsWithSocketsCount(_ constants.AppID, _ bool) map[constants.ChannelName]int64 {
 	return nil
 }
 
-func (m *MockAdapterForServe) GetChannelSockets(appID constants.AppID, channel constants.ChannelName, onlyLocal bool) map[constants.SocketID]*WebSocket {
+func (m *MockAdapterForServe) GetChannelSockets(_ constants.AppID, _ constants.ChannelName, _ bool) map[constants.SocketID]*WebSocket {
 	return nil
 }
 
-func (m *MockAdapterForServe) GetChannelSocketsCount(appID constants.AppID, channel constants.ChannelName, onlyLocal bool) int64 {
+func (m *MockAdapterForServe) GetChannelSocketsCount(_ constants.AppID, _ constants.ChannelName, _ bool) int64 {
 	return 0
 }
 
-func (m *MockAdapterForServe) IsInChannel(appID constants.AppID, channel constants.ChannelName, wsID constants.SocketID, onlyLocal bool) bool {
+func (m *MockAdapterForServe) IsInChannel(_ constants.AppID, _ constants.ChannelName, _ constants.SocketID, _ bool) bool {
 	return false
 }
 
-func (m *MockAdapterForServe) Send(appID constants.AppID, channel constants.ChannelName, data []byte, exceptingIds ...constants.SocketID) error {
+func (m *MockAdapterForServe) Send(_ constants.AppID, _ constants.ChannelName, _ []byte, _ ...constants.SocketID) error {
 	return nil
 }
 
-func (m *MockAdapterForServe) GetChannelMembers(appID constants.AppID, channel constants.ChannelName, onlyLocal bool) map[string]*pusherClient.MemberData {
+func (m *MockAdapterForServe) GetChannelMembers(_ constants.AppID, _ constants.ChannelName, _ bool) map[string]*pusherClient.MemberData {
 	return nil
 }
 
-func (m *MockAdapterForServe) GetChannelMembersCount(appID constants.AppID, channel constants.ChannelName, onlyLocal bool) int {
+func (m *MockAdapterForServe) GetChannelMembersCount(_ constants.AppID, _ constants.ChannelName, _ bool) int {
 	return 0
 }
 
-func (m *MockAdapterForServe) GetPresenceChannelsWithUsersCount(appID constants.AppID, onlyLocal bool) map[constants.ChannelName]int64 {
+func (m *MockAdapterForServe) GetPresenceChannelsWithUsersCount(_ constants.AppID, _ bool) map[constants.ChannelName]int64 {
 	return nil
 }
 
-func (m *MockAdapterForServe) AddUser(appID constants.AppID, ws *WebSocket) error {
+func (m *MockAdapterForServe) AddUser(_ constants.AppID, _ *WebSocket) error {
 	return nil
 }
 
-func (m *MockAdapterForServe) RemoveUser(appID constants.AppID, ws *WebSocket) error {
+func (m *MockAdapterForServe) RemoveUser(_ constants.AppID, _ *WebSocket) error {
 	return nil
 }
 
-func (m *MockAdapterForServe) GetUserSockets(appID constants.AppID, userID string) ([]*WebSocket, error) {
+func (m *MockAdapterForServe) GetUserSockets(_ constants.AppID, _ string) ([]*WebSocket, error) {
 	return nil, nil
 }
 
-func (m *MockAdapterForServe) TerminateUserConnections(appID constants.AppID, userID string) {
+func (m *MockAdapterForServe) TerminateUserConnections(_ constants.AppID, _ string) {
 }
 
 // MockAppManager for testing
@@ -194,6 +195,7 @@ func createTestServerForServe() *Server {
 		AppManager:     appManager,
 		Adapter:        adapter,
 		MetricsManager: metricsManager,
+		Logger:         logger.NewAppLogger(),
 		Closing:        false,
 	}
 }

@@ -27,7 +27,7 @@ func TestRequestEvent(t *testing.T) {
 
 func TestRequestEventWithMapData(t *testing.T) {
 	// Test RequestEvent with map data
-	data := map[string]interface{}{
+	data := map[string]any{
 		"user_id": "123",
 		"message": "hello",
 	}
@@ -530,7 +530,7 @@ func TestChannelEventMinimal(t *testing.T) {
 func TestChannelEventToJson(t *testing.T) {
 	// Test ChannelEvent ToJson method
 	event := "test-event"
-	data := map[string]interface{}{"message": "Hello World"}
+	data := map[string]any{"message": "Hello World"}
 	channel := constants.ChannelName("test-channel")
 	userID := "user123"
 	socketID := constants.SocketID("socket123")
@@ -672,7 +672,7 @@ func TestGetFallbackSerializationError(t *testing.T) {
 	result := getFallbackSerializationError()
 
 	// Should be valid JSON
-	var payload map[string]interface{}
+	var payload map[string]any
 	err := json.Unmarshal(result, &payload)
 	assert.NoError(t, err)
 
@@ -750,7 +750,7 @@ func TestPusherApiMessageMinimal(t *testing.T) {
 
 func TestJsonMarshaling(t *testing.T) {
 	// Test that all structs can be marshaled to JSON
-	structs := []interface{}{
+	structs := []any{
 		RequestEvent{Event: "test", Data: "data"},
 		Payload{Event: "test", Data: "data"},
 		EstablishData{SocketID: "socket", ActivityTimeout: 30},

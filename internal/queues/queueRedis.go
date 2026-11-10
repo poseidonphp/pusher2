@@ -88,7 +88,7 @@ func (rd *RedisQueue) addToQueue(jobData *webhooks.QueuedJobData) {
 
 func (rd *RedisQueue) monitorQueue(ctx context.Context) {
 	queueName := rd.RedisClient.GetKey("webhook_queue")
-	log.Logger().Infoln("Starting to listen for events on queue:", queueName)
+	log.Logger().Infof("Starting to listen for events on queue: %s\n", queueName)
 
 	// Use a shorter timeout to allow checking for context cancellation
 	const redisPollTimeout = 1 * time.Second
@@ -96,7 +96,7 @@ func (rd *RedisQueue) monitorQueue(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Logger().Infoln("Stopping Redis dispatcher due to context cancellation")
+			log.Logger().Info("Stopping Redis dispatcher due to context cancellation\n")
 			return
 		default:
 			eventData, err := rd.RedisClient.Client.BRPopLPush(context.Background(), queueName, queueName+"_working", redisPollTimeout).Result()

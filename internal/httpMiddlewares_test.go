@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 
 	"pusher/internal/apps"
 	"pusher/internal/constants"
+	"pusher/internal/logger"
 	"pusher/internal/util"
 )
 
@@ -374,10 +374,8 @@ func TestRateLimiterMiddleware(t *testing.T) {
 
 func TestLoggerMiddleware(t *testing.T) {
 	t.Run("SuccessfulRequest", func(t *testing.T) {
-		logger := logrus.New()
 		var logOutput bytes.Buffer
-		logger.SetOutput(&logOutput)
-		logger.SetLevel(logrus.InfoLevel)
+		logger := logger.NewAppLogger(logger.WithOutput(&logOutput))
 
 		router := newTestRouter("GET /test", func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]string{"message": "success"})
@@ -402,10 +400,8 @@ func TestLoggerMiddleware(t *testing.T) {
 	})
 
 	t.Run("ErrorRequest", func(t *testing.T) {
-		logger := logrus.New()
 		var logOutput bytes.Buffer
-		logger.SetOutput(&logOutput)
-		logger.SetLevel(logrus.InfoLevel)
+		logger := logger.NewAppLogger(logger.WithOutput(&logOutput))
 
 		router := newTestRouter("GET /test", func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
@@ -424,10 +420,8 @@ func TestLoggerMiddleware(t *testing.T) {
 	})
 
 	t.Run("ClientErrorRequest", func(t *testing.T) {
-		logger := logrus.New()
 		var logOutput bytes.Buffer
-		logger.SetOutput(&logOutput)
-		logger.SetLevel(logrus.InfoLevel)
+		logger := logger.NewAppLogger(logger.WithOutput(&logOutput))
 
 		router := newTestRouter("GET /test", func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad request"})
@@ -446,10 +440,8 @@ func TestLoggerMiddleware(t *testing.T) {
 	})
 
 	t.Run("LatencyCalculation", func(t *testing.T) {
-		logger := logrus.New()
 		var logOutput bytes.Buffer
-		logger.SetOutput(&logOutput)
-		logger.SetLevel(logrus.InfoLevel)
+		logger := logger.NewAppLogger(logger.WithOutput(&logOutput))
 
 		router := newTestRouter("GET /test", func(w http.ResponseWriter, r *http.Request) {
 			// Simulate some processing time
@@ -470,10 +462,8 @@ func TestLoggerMiddleware(t *testing.T) {
 	})
 
 	t.Run("DataLength", func(t *testing.T) {
-		logger := logrus.New()
 		var logOutput bytes.Buffer
-		logger.SetOutput(&logOutput)
-		logger.SetLevel(logrus.InfoLevel)
+		logger := logger.NewAppLogger(logger.WithOutput(&logOutput))
 
 		router := newTestRouter("GET /test", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
@@ -493,10 +483,8 @@ func TestLoggerMiddleware(t *testing.T) {
 	})
 
 	t.Run("ClientIPExtraction", func(t *testing.T) {
-		logger := logrus.New()
 		var logOutput bytes.Buffer
-		logger.SetOutput(&logOutput)
-		logger.SetLevel(logrus.InfoLevel)
+		logger := logger.NewAppLogger(logger.WithOutput(&logOutput))
 
 		router := newTestRouter("GET /test", func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]string{"message": "success"})
@@ -520,10 +508,8 @@ func TestMiddlewareIntegration(t *testing.T) {
 	t.Run("FullMiddlewareChain", func(t *testing.T) {
 		server, appManager := createTestServerForMiddleware()
 
-		logger := logrus.New()
 		var logOutput bytes.Buffer
-		logger.SetOutput(&logOutput)
-		logger.SetLevel(logrus.InfoLevel)
+		logger := logger.NewAppLogger(logger.WithOutput(&logOutput))
 
 		router := newTestRouter("POST /apps/{app_id}/events", func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]string{"message": "success"})
@@ -552,10 +538,8 @@ func TestMiddlewareIntegration(t *testing.T) {
 	t.Run("MiddlewareChainWithError", func(t *testing.T) {
 		server, _ := createTestServerForMiddleware()
 
-		logger := logrus.New()
 		var logOutput bytes.Buffer
-		logger.SetOutput(&logOutput)
-		logger.SetLevel(logrus.InfoLevel)
+		logger := logger.NewAppLogger(logger.WithOutput(&logOutput))
 
 		router := newTestRouter("POST /apps/{app_id}/events", func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]string{"message": "success"})

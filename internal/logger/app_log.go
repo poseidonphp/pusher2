@@ -208,6 +208,21 @@ func (a *AppLog) Fatalf(format string, args ...any) {
 	osExit(1)
 }
 
+// SetLevel changes the minimum level after construction. Since loggers
+// derived via WithField/WithFields share this logger's *slog.LevelVar, the
+// change applies to all of them too. Use this when some messages must be
+// logged before the desired level is known: build with NewAppLogger (level
+// defaults to Info), then call SetLevel once flags/env vars are parsed.
+func (a *AppLog) SetLevel(level slog.Level) {
+	a.level.Set(level)
+}
+
+// SetLogLevel is SetLevel taking a string level name (see WithLogLevel).
+// Unrecognized values fall back to info.
+func (a *AppLog) SetLogLevel(levelStr string) {
+	a.level.Set(parseLogLevel(levelStr))
+}
+
 func (a *AppLog) WithField(key string, value any) LoggingInterface {
 	return &AppLog{logger: a.logger.With(key, value), level: a.level}
 }

@@ -14,10 +14,10 @@ import (
 	"pusher/internal/apps"
 	"pusher/internal/cache"
 	"pusher/internal/config"
+	"pusher/internal/logger"
 	"pusher/internal/metrics"
 	"pusher/internal/queues"
 	"pusher/internal/webhooks"
-	"pusher/log"
 )
 
 type Server struct {
@@ -30,6 +30,7 @@ type Server struct {
 	CacheManager      cache.CacheContract
 	QueueManager      queues.QueueInterface
 	WebhookSender     *webhooks.WebhookSender
+	Logger            logger.LoggingInterface
 	Closing           bool
 	// websocketPool  sync.Pool
 }
@@ -53,6 +54,7 @@ func NewServer(ctx context.Context, conf *config.ServerConfig) (*Server, error) 
 	s := &Server{
 		ctx:    ctx,
 		config: conf,
+		Logger: conf.Logger,
 	}
 
 	// Initialize metrics manager first
@@ -135,6 +137,7 @@ func Run(parentCtx context.Context) error {
 		return errors.New("parent context is nil")
 	}
 	ctx, cancel := context.WithCancel(parentCtx)
+
 	// Bootstrap the application by reading command line flags, environment variables, and config files
 	// to build the server configuration.
 	serverConfig, err := config.InitializeServerConfig(&ctx)
@@ -143,7 +146,7 @@ func Run(parentCtx context.Context) error {
 		return errors.New("failed to load config: " + err.Error())
 	}
 
-	log.Logger().Infoln("Booting pusher server")
+	serverConfig.Logger.Info("Booting pusher server\n")
 
 	// Create the server instance
 	server, serverErr := NewServer(ctx, serverConfig)
@@ -201,10 +204,10 @@ func Run(parentCtx context.Context) error {
 }
 
 func (s *Server) CloseAllLocalSockets() {
-	log.Logger().Info("Closing all local sockets")
+	s.Logger.Info("Closing all local sockets\n")
 	namespaces, err := s.Adapter.GetNamespaces()
 	if err != nil {
-		log.Logger().Warnf("failed to get namespaces: %s", err.Error())
+		s.Logger.Warnf("failed to get namespaces: %s", err.Error())
 		return
 	}
 
@@ -227,7 +230,7 @@ func (s *Server) CloseAllLocalSockets() {
 		}
 	}
 	wg.Wait()
-	log.Logger().Debug("All local sockets closed. Clearing namespaces")
+	s.Logger.Debug("All local sockets closed. Clearing namespaces\n")
 	s.Adapter.ClearNamespaces()
 }
 
@@ -282,7 +285,7 @@ func loadAdapter(ctx context.Context, conf *config.ServerConfig, metricsManager 
 			return nil, err
 		}
 	default:
-		log.Logger().Warnf("unknown adapter driver '%s', defaulting to 'local'", conf.AdapterDriver)
+		conf.Logger.Warnf("unknown adapter driver '%s', defaulting to 'local'", conf.AdapterDriver)
 		adapter = NewLocalAdapter(metricsManager)
 		err = adapter.Init()
 		if err != nil {
@@ -350,7 +353,7 @@ func loadCacheManager(ctx context.Context, conf *config.ServerConfig) (cache.Cac
 // and exits the application.
 func handlePanic(server *Server) {
 	if r := recover(); r != nil {
-		log.Logger().Error("Recovered from panic", r)
+		server.Logger.Error("Recovered from panic", r)
 		server.Closing = true
 		attemptGracefulShutdown(nil, nil, server, func() {})
 	}
@@ -358,7 +361,7 @@ func handlePanic(server *Server) {
 
 // attemptGracefulShutdown listens for OS interrupt signals (like Ctrl+C) and initiates a graceful shutdown
 func attemptGracefulShutdown(webServer *http.Server, metricsServer *http.Server, server *Server, cancel context.CancelFunc) {
-	log.Logger().Infoln("Received interrupt signal, waiting for all tasks to complete...")
+	server.Logger.Info("Received interrupt signal, waiting for all tasks to complete...\n")
 
 	serverShutdownContext, ctxCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer ctxCancel()
@@ -368,63 +371,53 @@ func attemptGracefulShutdown(webServer *http.Server, metricsServer *http.Server,
 
 	// Shutdown the HTTP server
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		log.Logger().Info("Shutting down HTTP server...")
+	wg.Go(func() {
+		server.Logger.Info("Shutting down HTTP server...")
 		if err := webServer.Shutdown(serverShutdownContext); err != nil {
-			log.Logger().Errorf("HTTP server shutdown error: %v", err)
+			server.Logger.Errorf("HTTP server shutdown error: %v", err)
 		} else {
-			log.Logger().Info("HTTP server shut down gracefully")
+			server.Logger.Info("HTTP server shut down gracefully")
 		}
-	}()
+	})
 
 	// Shutdown the metrics server (if it was started)
 	if metricsServer != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			log.Logger().Info("Shutting down Metrics server...")
+		wg.Go(func() {
+			server.Logger.Info("Shutting down Metrics server...")
 			if err := metricsServer.Shutdown(serverShutdownContext); err != nil {
-				log.Logger().Errorf("Metrics server shutdown error: %v", err)
+				server.Logger.Errorf("Metrics server shutdown error: %v", err)
 			} else {
-				log.Logger().Info("Metrics server shut down gracefully")
+				server.Logger.Info("Metrics server shut down gracefully")
 			}
-		}()
+		})
 	}
 
 	// close all local sockets
 	socketsClosed := make(chan struct{})
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		log.Logger().Infoln("... closing all local sockets")
+	wg.Go(func() {
+		server.Logger.Info("... closing all local sockets\n")
 
 		server.CloseAllLocalSockets()
-		log.Logger().Infoln("... all local sockets closed")
+		server.Logger.Info("... all local sockets closed\n")
 		close(socketsClosed)
-	}()
+	})
 
 	// shut down cache manager
 	if server.CacheManager != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			server.CacheManager.Shutdown()
-		}()
+		})
 	}
 
 	if server.QueueManager != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			<-socketsClosed
-			log.Logger().Info("Shutting down Queue manager...")
+			server.Logger.Info("Shutting down Queue manager...")
 			queueShutdownCtx, queueCancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer queueCancel()
 			server.QueueManager.Shutdown(queueShutdownCtx)
-			log.Logger().Info("Queue manager shut down")
-		}()
+			server.Logger.Info("Queue manager shut down")
+		})
 	}
 
 	// Cancel the context to signal all goroutines to stop
@@ -439,9 +432,9 @@ func attemptGracefulShutdown(webServer *http.Server, metricsServer *http.Server,
 
 	select {
 	case <-doneChan:
-		log.Logger().Info("All shutdown tasks completed")
+		server.Logger.Info("All shutdown tasks completed")
 	case <-serverShutdownContext.Done():
-		log.Logger().Warn("Shutdown tasks did not complete in time")
+		server.Logger.Warn("Shutdown tasks did not complete in time")
 	}
 
 	os.Exit(0)
@@ -458,11 +451,11 @@ func serveMetrics(server *Server, serverConfig *config.ServerConfig) *http.Serve
 	}
 
 	go func() {
-		log.Logger().Infof("Starting metrics server on %s:%s/metrics\n", serverConfig.BindAddress, serverConfig.MetricsPort)
+		server.Logger.Infof("Starting metrics server on %s:%s/metrics\n", serverConfig.BindAddress, serverConfig.MetricsPort)
 		if metricsErr := metricsServer.ListenAndServe(); metricsErr != nil && !errors.Is(metricsErr, http.ErrServerClosed) {
-			log.Logger().Fatalf("Failed to start metrics server: %s", metricsErr)
+			server.Logger.Fatalf("Failed to start metrics server: %s", metricsErr)
 		}
-		log.Logger().Infoln("Metrics server stopped")
+		server.Logger.Info("Metrics server stopped\n")
 	}()
 	return metricsServer
 }

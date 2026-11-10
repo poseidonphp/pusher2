@@ -129,6 +129,34 @@ func TestLevelFiltering(t *testing.T) {
 	assert.NotEmpty(t, buf.String())
 }
 
+func TestSetLevel_AppliesAfterConstruction(t *testing.T) {
+	var buf bytes.Buffer
+	// Defaults to Info, as it would before flags/env vars are parsed.
+	l := NewAppLogger(WithOutput(&buf), WithOutputMode(OutputModeJSON))
+
+	l.Debug("too early, should be filtered")
+	assert.Empty(t, buf.String())
+
+	l.SetLevel(slog.LevelDebug)
+	l.Debug("now visible")
+	assert.Contains(t, buf.String(), "now visible")
+
+	// A logger derived before the SetLevel call shares the same level var.
+	buf.Reset()
+	child := l.WithField("k", "v")
+	child.Debug("child sees the updated level too")
+	assert.Contains(t, buf.String(), "child sees the updated level too")
+}
+
+func TestSetLogLevel_StringVariant(t *testing.T) {
+	var buf bytes.Buffer
+	l := NewAppLogger(WithOutput(&buf), WithOutputMode(OutputModeJSON))
+
+	l.SetLogLevel("trace")
+	l.Trace("visible now")
+	assert.Contains(t, buf.String(), "visible now")
+}
+
 func TestParseLogLevel(t *testing.T) {
 	cases := map[string]slog.Level{
 		"trace":   LevelTrace,

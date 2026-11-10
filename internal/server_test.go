@@ -13,6 +13,7 @@ import (
 	"pusher/internal/clients"
 	"pusher/internal/config"
 	"pusher/internal/constants"
+	"pusher/internal/logger"
 	"pusher/internal/metrics"
 	"pusher/internal/webhooks"
 
@@ -116,10 +117,10 @@ func (m *ServerTestMockAppManager) FindByKey(key string) (*apps.App, error) {
 type ServerTestMockCache struct{}
 
 func (m *ServerTestMockCache) Init(ctx context.Context) error { return nil }
-func (m *ServerTestMockCache) Get(key string) (interface{}, error) {
+func (m *ServerTestMockCache) Get(key string) (any, error) {
 	return nil, errors.New("not found")
 }
-func (m *ServerTestMockCache) Set(key string, value interface{}, expiration time.Duration) error {
+func (m *ServerTestMockCache) Set(key string, value any, expiration time.Duration) error {
 	return nil
 }
 func (m *ServerTestMockCache) Delete(key string) error { return nil }
@@ -129,9 +130,9 @@ func (m *ServerTestMockCache) Close() error            { return nil }
 // ServerTestMockQueue for testing server functions
 type ServerTestMockQueue struct{}
 
-func (m *ServerTestMockQueue) Init(ctx context.Context) error                    { return nil }
-func (m *ServerTestMockQueue) Publish(channel string, message interface{}) error { return nil }
-func (m *ServerTestMockQueue) Subscribe(channel string, handler func(message interface{})) error {
+func (m *ServerTestMockQueue) Init(ctx context.Context) error            { return nil }
+func (m *ServerTestMockQueue) Publish(channel string, message any) error { return nil }
+func (m *ServerTestMockQueue) Subscribe(channel string, handler func(message any)) error {
 	return nil
 }
 func (m *ServerTestMockQueue) Unsubscribe(channel string) error { return nil }
@@ -272,6 +273,7 @@ func TestCloseAllLocalSockets(t *testing.T) {
 	t.Run("CloseAllLocalSockets with empty namespaces", func(t *testing.T) {
 		server := &Server{
 			Adapter: &ServerTestMockAdapter{},
+			Logger:  logger.NewAppLogger(),
 		}
 
 		// Should not panic and should complete successfully
@@ -285,6 +287,7 @@ func TestCloseAllLocalSockets(t *testing.T) {
 		mockAdapter := &ServerTestMockAdapter{}
 		server := &Server{
 			Adapter: mockAdapter,
+			Logger:  logger.NewAppLogger(),
 		}
 
 		// Create a custom mock adapter for this test
@@ -304,6 +307,7 @@ func TestCloseAllLocalSockets(t *testing.T) {
 		mockAdapter := &ServerTestMockAdapter{}
 		server := &Server{
 			Adapter: mockAdapter,
+			Logger:  logger.NewAppLogger(),
 		}
 
 		// Create a custom mock adapter for this test
@@ -622,6 +626,7 @@ func TestServeMetrics(t *testing.T) {
 			ChannelCacheDriver:     "local",
 			LogLevel:               "debug",
 			IgnoreLoggerMiddleware: true,
+			Logger:                 logger.NewAppLogger(),
 			Applications: func() []apps.App {
 				app := apps.App{
 					ID:     "test-app",
@@ -683,6 +688,7 @@ func TestServeMetrics(t *testing.T) {
 					ChannelCacheDriver:     "local",
 					LogLevel:               "debug",
 					IgnoreLoggerMiddleware: true,
+					Logger:                 logger.NewAppLogger(),
 					Applications: func() []apps.App {
 						app := apps.App{
 							ID:     "test-app",
@@ -733,6 +739,7 @@ func TestServerLifecycleIntegration(t *testing.T) {
 			ChannelCacheDriver:     "local",
 			LogLevel:               "debug",
 			IgnoreLoggerMiddleware: true,
+			Logger:                 logger.NewAppLogger(),
 			Applications: func() []apps.App {
 				app := apps.App{
 					ID:     "test-app",
@@ -745,8 +752,7 @@ func TestServerLifecycleIntegration(t *testing.T) {
 		}
 
 		// Step 1: Context creation
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		ctx := t.Context()
 
 		// Step 2: Server creation
 		server, err := NewServer(ctx, config)
@@ -791,17 +797,16 @@ func TestServerConcurrency(t *testing.T) {
 	t.Run("concurrent CloseAllLocalSockets calls", func(t *testing.T) {
 		server := &Server{
 			Adapter: &ServerTestMockAdapter{},
+			Logger:  logger.NewAppLogger(),
 		}
 
 		var wg sync.WaitGroup
 		numGoroutines := 10
 
-		for i := 0; i < numGoroutines; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+		for range numGoroutines {
+			wg.Go(func() {
 				server.CloseAllLocalSockets()
-			}()
+			})
 		}
 
 		wg.Wait()
@@ -812,18 +817,17 @@ func TestServerConcurrency(t *testing.T) {
 		server := &Server{
 			Adapter: &ServerTestMockAdapter{},
 			Closing: false,
+			Logger:  logger.NewAppLogger(),
 		}
 
 		var wg sync.WaitGroup
 		numGoroutines := 10
 
-		for i := 0; i < numGoroutines; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+		for range numGoroutines {
+			wg.Go(func() {
 				server.Closing = true
 				server.CloseAllLocalSockets()
-			}()
+			})
 		}
 
 		wg.Wait()
@@ -857,6 +861,7 @@ func TestServerErrorHandling(t *testing.T) {
 	t.Run("loadAdapter with invalid driver", func(t *testing.T) {
 		config := &config.ServerConfig{
 			AdapterDriver: "invalid",
+			Logger:        logger.NewAppLogger(),
 		}
 
 		ctx := context.Background()

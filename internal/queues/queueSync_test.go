@@ -169,7 +169,7 @@ func TestSyncQueue_addToQueue(t *testing.T) {
 
 		// Collect messages
 		var receivedMessages []*webhooks.QueuedJobData
-		for i := 0; i < 2; i++ {
+		for range 2 {
 			select {
 			case receivedData := <-queue.incomingMessages:
 				receivedMessages = append(receivedMessages, receivedData)
@@ -208,7 +208,7 @@ func TestSyncQueue_addToQueue(t *testing.T) {
 		queue.Init()
 
 		// Fill the channel to capacity
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			jobData := createTestQueuedJobData()
 			jobData.Payload.Name = "test-event-" + string(rune(i))
 			select {
@@ -240,8 +240,7 @@ func TestSyncQueue_addToQueue(t *testing.T) {
 
 func TestSyncQueue_monitorQueue(t *testing.T) {
 	t.Run("ProcessSingleMessage", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		ctx := t.Context()
 
 		webhookSender := &webhooks.WebhookSender{}
 		queue, err := NewSyncQueue(ctx, webhookSender)
@@ -264,8 +263,7 @@ func TestSyncQueue_monitorQueue(t *testing.T) {
 	})
 
 	t.Run("ProcessMultipleMessages", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		ctx := t.Context()
 
 		webhookSender := &webhooks.WebhookSender{}
 		queue, err := NewSyncQueue(ctx, webhookSender)
@@ -275,7 +273,7 @@ func TestSyncQueue_monitorQueue(t *testing.T) {
 		go queue.monitorQueue(ctx)
 
 		// Add multiple messages
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			jobData := createTestQueuedJobData()
 			jobData.Payload.Name = "test-event-" + string(rune(i))
 			queue.addToQueue(jobData)
@@ -312,8 +310,7 @@ func TestSyncQueue_monitorQueue(t *testing.T) {
 	})
 
 	t.Run("EmptyQueueHandling", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		ctx := t.Context()
 
 		webhookSender := &webhooks.WebhookSender{}
 		queue, err := NewSyncQueue(ctx, webhookSender)
@@ -329,8 +326,7 @@ func TestSyncQueue_monitorQueue(t *testing.T) {
 	})
 
 	t.Run("ConcurrentMessageProcessing", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		ctx := t.Context()
 
 		webhookSender := &webhooks.WebhookSender{}
 		queue, err := NewSyncQueue(ctx, webhookSender)
@@ -340,7 +336,7 @@ func TestSyncQueue_monitorQueue(t *testing.T) {
 		go queue.monitorQueue(ctx)
 
 		// Add messages concurrently
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			go func(index int) {
 				jobData := createTestQueuedJobData()
 				jobData.Payload.Name = "concurrent-event-" + string(rune(index))
@@ -355,8 +351,7 @@ func TestSyncQueue_monitorQueue(t *testing.T) {
 
 func TestSyncQueue_Integration(t *testing.T) {
 	t.Run("FullWorkflow", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		ctx := t.Context()
 
 		webhookSender := &webhooks.WebhookSender{}
 		queue, err := NewSyncQueue(ctx, webhookSender)
@@ -386,8 +381,7 @@ func TestSyncQueue_Integration(t *testing.T) {
 	})
 
 	t.Run("ErrorHandling", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		ctx := t.Context()
 
 		webhookSender := &webhooks.WebhookSender{}
 		queue, err := NewSyncQueue(ctx, webhookSender)
@@ -469,8 +463,7 @@ func TestSyncQueue_EdgeCases(t *testing.T) {
 
 func TestSyncQueue_Performance(t *testing.T) {
 	t.Run("HighThroughput", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		ctx := t.Context()
 
 		webhookSender := &webhooks.WebhookSender{}
 		queue, err := NewSyncQueue(ctx, webhookSender)
@@ -484,8 +477,8 @@ func TestSyncQueue_Performance(t *testing.T) {
 		start := time.Now()
 
 		// Send messages in smaller batches
-		for batch := 0; batch < 10; batch++ {
-			for i := 0; i < 10; i++ {
+		for batch := range 10 {
+			for i := range 10 {
 				jobData := createTestQueuedJobData()
 				jobData.Payload.Name = "perf-event-" + string(rune(batch*10+i))
 				queue.addToQueue(jobData)

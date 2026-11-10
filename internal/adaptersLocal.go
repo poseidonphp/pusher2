@@ -170,8 +170,8 @@ func (l *LocalAdapter) RemoveFromChannel(appID constants.AppID, channels []const
 
 func (l *LocalAdapter) Send(appID constants.AppID, channel constants.ChannelName, data []byte, exceptIDs ...constants.SocketID) error {
 	// For user-dedicated channels, intercept the call and use custom logic
-	if strings.HasPrefix(string(channel), constants.SocketRushServerToUserPrefix) {
-		userId := strings.TrimPrefix(string(channel), constants.SocketRushServerToUserPrefix)
+	if after, ok := strings.CutPrefix(string(channel), constants.SocketRushServerToUserPrefix); ok {
+		userId := after
 		sockets, err := l.GetUserSockets(appID, userId)
 		if err != nil {
 			return err

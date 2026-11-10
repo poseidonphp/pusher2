@@ -22,6 +22,7 @@ linters:
     - dupl
     - dupword
     - durationcheck
+    - embedlit
     - err113
     - errcheck
     - errchkjson
@@ -67,6 +68,7 @@ linters:
     - mirror
     - misspell
     - mnd
+    - modernize
     - musttag
     - nakedret
     - nestif

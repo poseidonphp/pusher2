@@ -494,7 +494,7 @@ func TestSnsWebhook_Send_Integration(t *testing.T) {
 		mockClient.ClearMessages()
 
 		// Send multiple webhooks
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			testWebhook := pusherClient.Webhook{
 				TimeMs: int(time.Now().UnixMilli()),
 				Events: []pusherClient.WebhookEvent{
@@ -533,7 +533,7 @@ func TestSnsWebhook_Send_Integration(t *testing.T) {
 		const numGoroutines = 10
 		var errs = make(chan error, numGoroutines)
 
-		for i := 0; i < numGoroutines; i++ {
+		for i := range numGoroutines {
 			go func(index int) {
 				testWebhook := pusherClient.Webhook{
 					TimeMs: int(time.Now().UnixMilli()),
@@ -552,7 +552,7 @@ func TestSnsWebhook_Send_Integration(t *testing.T) {
 		}
 
 		// Collect results
-		for i := 0; i < numGoroutines; i++ {
+		for range numGoroutines {
 			err := <-errs
 			assert.NoError(t, err)
 		}

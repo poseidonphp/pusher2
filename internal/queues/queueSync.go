@@ -76,7 +76,7 @@ func (sd *SyncQueue) monitorQueue(ctx context.Context) {
 			log.Logger().Debugf("Dispatching event: %s (%v)", data.Payload.Name, data.Payload.Channel)
 			sd.sendWebhook(data)
 		case <-ctx.Done():
-			log.Logger().Debugln("Stopping local dispatcher due to context cancellation")
+			log.Logger().Debug("Stopping local dispatcher due to context cancellation\n")
 			return
 		}
 	}

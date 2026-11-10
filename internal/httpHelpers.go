@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"net/http"
+	"slices"
 
 	"pusher/log"
 )
@@ -53,8 +54,8 @@ type middleware func(http.Handler) http.Handler
 
 // chain applies middlewares so that the first one listed runs first.
 func chain(h http.Handler, middlewares ...middleware) http.Handler {
-	for i := len(middlewares) - 1; i >= 0; i-- {
-		h = middlewares[i](h)
+	for _, middleware := range slices.Backward(middlewares) {
+		h = middleware(h)
 	}
 	return h
 }

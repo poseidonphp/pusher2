@@ -209,7 +209,7 @@ func TestRedisQueue_addToQueue(t *testing.T) {
 		}
 
 		// Add multiple messages
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			jobData := createTestQueuedJobDataForRedis()
 			jobData.Payload.Name = "test-event-" + string(rune(i))
 			queue.addToQueue(jobData)
@@ -314,7 +314,7 @@ func TestRedisQueue_monitorQueue(t *testing.T) {
 		}()
 
 		// Add multiple messages
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			jobData := createTestQueuedJobDataForRedis()
 			jobData.Payload.Name = "test-event-" + string(rune(i))
 			queue.addToQueue(jobData)
@@ -364,8 +364,7 @@ func TestRedisQueue_monitorQueue(t *testing.T) {
 	})
 
 	t.Run("EmptyQueueHandling", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		ctx := t.Context()
 
 		redisClient, mr := createTestRedisClient(t)
 		defer mr.Close()
@@ -402,7 +401,7 @@ func TestRedisQueue_monitorQueue(t *testing.T) {
 		}()
 
 		// Add messages concurrently
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			go func(index int) {
 				jobData := createTestQueuedJobDataForRedis()
 				jobData.Payload.Name = "concurrent-event-" + string(rune(index))
@@ -639,7 +638,7 @@ func TestRedisQueue_Performance(t *testing.T) {
 		messageCount := 100
 		start := time.Now()
 
-		for i := 0; i < messageCount; i++ {
+		for i := range messageCount {
 			jobData := createTestQueuedJobDataForRedis()
 			jobData.Payload.Name = "perf-event-" + string(rune(i))
 			queue.addToQueue(jobData)

@@ -85,7 +85,7 @@ func TestJSONHandler(t *testing.T) {
 
 		// Should return valid JSON
 		body := rr.Body.Bytes()
-		var jsonData map[string]interface{}
+		var jsonData map[string]any
 		err := json.Unmarshal(body, &jsonData)
 		require.NoError(t, err)
 
@@ -221,7 +221,7 @@ func TestHTTPIntegration(t *testing.T) {
 		// Make concurrent requests to test thread safety
 		done := make(chan bool, 10)
 
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			go func() {
 				defer func() { done <- true }()
 
@@ -237,7 +237,7 @@ func TestHTTPIntegration(t *testing.T) {
 		}
 
 		// Wait for all goroutines to complete
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			<-done
 		}
 	})
@@ -336,7 +336,7 @@ func TestLargeResponse(t *testing.T) {
 	handler := NewMetricsHandler(metrics)
 
 	// Generate some metrics to make response larger
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		metrics.MarkNewConnection("test-app")
 		metrics.MarkWsMessageSent("test-app", "test-message")
 	}
