@@ -22,7 +22,6 @@ linters:
     - dupl
     - dupword
     - durationcheck
-    - embedlit
     - err113
     - errcheck
     - errchkjson
