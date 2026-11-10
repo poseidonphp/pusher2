@@ -3,15 +3,14 @@ package internal
 import (
 	"net"
 	"net/http"
+	"slices"
 
-	"github.com/gin-gonic/gin"
 	"github.com/gobwas/ws"
 	"github.com/gobwas/ws/wsutil"
 
-	pusherClient "github.com/pusher/pusher-http-go/v5"
-	"github.com/thoas/go-funk"
-
 	"time"
+
+	pusherClient "github.com/pusher/pusher-http-go/v5"
 
 	"pusher/internal/apps"
 	"pusher/internal/constants"
@@ -32,72 +31,49 @@ import (
 //
 // It does not start the server; it only sets it up, then returns it to the caller.
 func LoadWebServer(server *Server) *http.Server {
-	// Establish the Gin router for handling HTTP requests
-	if server.config.Env == constants.PRODUCTION {
-		gin.SetMode(gin.ReleaseMode)
-	} else {
-		gin.SetMode(gin.DebugMode)
+	webServer := &http.Server{
+		Addr:    server.config.BindAddress + ":" + server.config.Port,
+		Handler: chain(newRouter(server), LoggerMiddleware(log.Logger()), RecoveryMiddleware),
 	}
-	router := gin.New()
-	router.Use(LoggerMiddleware(log.Logger()))
-	router.Use(gin.Recovery())
+	return webServer
+}
 
-	backendGroup := router.Group("/apps",
-		CorsMiddleware(server),
-		AppMiddleware(server), // this should come early as it will set the app in the context
-		SignatureMiddleware(server),
-		RateLimiterMiddleware(server),
-	)
-	{
-		backendGroup.POST("/:app_id/events", func(c *gin.Context) {
-			EventTrigger(c, server)
-		})
+// newRouter registers the websocket, REST API and health routes.
+func newRouter(server *Server) *http.ServeMux {
+	mux := http.NewServeMux()
 
-		backendGroup.POST("/:app_id/batch_events", func(c *gin.Context) {
-			BatchEventTrigger(c, server)
-		})
-
-		backendGroup.GET("/:app_id/channels", func(c *gin.Context) {
-			ChannelIndex(c, server)
-		})
-
-		backendGroup.GET("/:app_id/channels/:channel_name", func(c *gin.Context) {
-			ChannelShow(c, server)
-		})
-
-		backendGroup.GET("/:app_id/channels/:channel_name/users", func(c *gin.Context) {
-			ChannelUsers(c, server)
-		})
-
-		//    POST /apps/[app_id]/users/[user_id]/terminate_connections
-		backendGroup.POST("/:app_id/users/:user_id/terminate_connections", func(c *gin.Context) {
-			TerminateUserConnections(c, server)
-		})
-
+	backend := func(handle func(http.ResponseWriter, *http.Request, *Server)) http.Handler {
+		return chain(
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { handle(w, r, server) }),
+			CorsMiddleware(server),
+			AppMiddleware(server), // this should come early as it will set the app in the context
+			SignatureMiddleware(server),
+			RateLimiterMiddleware(server),
+		)
 	}
-	router.GET("/app/:key", func(c *gin.Context) {
+
+	mux.Handle("POST /apps/{app_id}/events", backend(EventTrigger))
+	mux.Handle("POST /apps/{app_id}/batch_events", backend(BatchEventTrigger))
+	mux.Handle("GET /apps/{app_id}/channels", backend(ChannelIndex))
+	mux.Handle("GET /apps/{app_id}/channels/{channel_name}", backend(ChannelShow))
+	mux.Handle("GET /apps/{app_id}/channels/{channel_name}/users", backend(ChannelUsers))
+	mux.Handle("POST /apps/{app_id}/users/{user_id}/terminate_connections", backend(TerminateUserConnections))
+
+	mux.HandleFunc("GET /app/{key}", func(w http.ResponseWriter, r *http.Request) {
 		if server.Closing {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Server is not accepting connections"})
+			writeError(w, http.StatusServiceUnavailable, "Server is not accepting connections")
 			return
 		}
-		appKey := c.Param("key")
-		client := c.Query("client")
-		version := c.Query("version")
-		protocol := c.Query("protocol")
-
-		serveWs(server, c.Writer, c.Request, appKey, client, version, protocol)
+		query := r.URL.Query()
+		serveWs(server, w, r, r.PathValue("key"), query.Get("client"), query.Get("version"), query.Get("protocol"))
 	})
 
 	// Health check endpoint
-	router.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok"})
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
-	webServer := &http.Server{
-		Addr:    server.config.BindAddress + ":" + server.config.Port,
-		Handler: router,
-	}
-	return webServer
+	return mux
 }
 
 // serveWs handles websocket requests from the peer
@@ -120,7 +96,7 @@ func serveWs(server *Server, w http.ResponseWriter, r *http.Request, appKey, cli
 		return
 	}
 
-	if !funk.Contains(constants.SupportedProtocolVersions, protocol) {
+	if !slices.Contains(constants.SupportedProtocolVersions, protocol) {
 		log.Logger().Debug("Unsupported protocol version", protocol)
 		closeConnectionWithError(conn, util.ErrCodeUnsupportedProtocolVersion, "unsupported protocol version")
 		return
@@ -201,7 +177,7 @@ func createWebSocket(socketID constants.SocketID, conn net.Conn, server *Server,
 		return nil
 	}
 
-	return &WebSocket{
+	socket := &WebSocket{
 		ID:                 socketID,
 		conn:               conn,
 		closed:             false,
@@ -212,6 +188,9 @@ func createWebSocket(socketID constants.SocketID, conn net.Conn, server *Server,
 		connReader:         wsutil.NewReader(conn, ws.StateServerSide),
 		connWriter:         wsutil.NewWriter(conn, ws.StateServerSide, ws.OpText),
 	}
+	// Answer pings and closes that arrive between fragments of a message.
+	socket.connReader.OnIntermediate = socket.handleControlFrame
+	return socket
 }
 
 // addSocketToAdapter adds the socket to the server's adapter

@@ -12,7 +12,6 @@ import (
 	"pusher/internal/constants"
 	"pusher/internal/metrics"
 
-	"github.com/gin-gonic/gin"
 	pusherClient "github.com/pusher/pusher-http-go/v5"
 	"github.com/stretchr/testify/assert"
 )
@@ -146,8 +145,6 @@ func createTestServerForApiChannels() (*Server, *MockAdapterForApiChannels, cach
 }
 
 func TestChannelIndex(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
 	t.Run("BasicChannelList", func(t *testing.T) {
 		server, adapter, _, cancel := createTestServerForApiChannels()
 		defer cancel()
@@ -162,13 +159,11 @@ func TestChannelIndex(t *testing.T) {
 		}
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		req := httptest.NewRequest("GET", "/channels", nil)
-		c.Request = req
+		req = withApp(req, app)
 
-		ChannelIndex(c, server)
+		ChannelIndex(w, req, server)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
@@ -195,13 +190,11 @@ func TestChannelIndex(t *testing.T) {
 		}
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		req := httptest.NewRequest("GET", "/channels?filter_by_prefix=public-", nil)
-		c.Request = req
+		req = withApp(req, app)
 
-		ChannelIndex(c, server)
+		ChannelIndex(w, req, server)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
@@ -227,13 +220,11 @@ func TestChannelIndex(t *testing.T) {
 		}
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		req := httptest.NewRequest("GET", "/channels?filter_by_prefix=presence-&info=user_count", nil)
-		c.Request = req
+		req = withApp(req, app)
 
-		ChannelIndex(c, server)
+		ChannelIndex(w, req, server)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
@@ -252,13 +243,11 @@ func TestChannelIndex(t *testing.T) {
 		app := createTestAppForApiChannels()
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		req := httptest.NewRequest("GET", "/channels?info=user_count", nil)
-		c.Request = req
+		req = withApp(req, app)
 
-		ChannelIndex(c, server)
+		ChannelIndex(w, req, server)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 
@@ -274,12 +263,10 @@ func TestChannelIndex(t *testing.T) {
 		defer cancel()
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
 
 		req := httptest.NewRequest("GET", "/channels", nil)
-		c.Request = req
 
-		ChannelIndex(c, server)
+		ChannelIndex(w, req, server)
 
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 
@@ -299,13 +286,11 @@ func TestChannelIndex(t *testing.T) {
 		adapter.channelsWithSocketsCount = map[constants.ChannelName]int64{}
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		req := httptest.NewRequest("GET", "/channels", nil)
-		c.Request = req
+		req = withApp(req, app)
 
-		ChannelIndex(c, server)
+		ChannelIndex(w, req, server)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
@@ -317,8 +302,6 @@ func TestChannelIndex(t *testing.T) {
 }
 
 func TestChannelShow(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
 	t.Run("BasicChannelInfo", func(t *testing.T) {
 		server, adapter, _, cancel := createTestServerForApiChannels()
 		defer cancel()
@@ -327,14 +310,12 @@ func TestChannelShow(t *testing.T) {
 		adapter.channelSocketsCount = 5
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		req := httptest.NewRequest("GET", "/channels/public-channel", nil)
-		c.Request = req
-		c.Params = gin.Params{{Key: "channel_name", Value: "public-channel"}}
+		req = withApp(req, app)
+		req.SetPathValue("channel_name", "public-channel")
 
-		ChannelShow(c, server)
+		ChannelShow(w, req, server)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
@@ -352,14 +333,12 @@ func TestChannelShow(t *testing.T) {
 		adapter.channelMembersCount = 3
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		req := httptest.NewRequest("GET", "/channels/presence-channel?info=user_count", nil)
-		c.Request = req
-		c.Params = gin.Params{{Key: "channel_name", Value: "presence-channel"}}
+		req = withApp(req, app)
+		req.SetPathValue("channel_name", "presence-channel")
 
-		ChannelShow(c, server)
+		ChannelShow(w, req, server)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
@@ -379,14 +358,12 @@ func TestChannelShow(t *testing.T) {
 		adapter.channelSocketsCount = 7
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		req := httptest.NewRequest("GET", "/channels/public-channel?info=subscription_count", nil)
-		c.Request = req
-		c.Params = gin.Params{{Key: "channel_name", Value: "public-channel"}}
+		req = withApp(req, app)
+		req.SetPathValue("channel_name", "public-channel")
 
-		ChannelShow(c, server)
+		ChannelShow(w, req, server)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
@@ -408,14 +385,12 @@ func TestChannelShow(t *testing.T) {
 		cacheManager.Set(cacheKey, "cached-data")
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		req := httptest.NewRequest("GET", "/channels/cache-channel?info=cache", nil)
-		c.Request = req
-		c.Params = gin.Params{{Key: "channel_name", Value: "cache-channel"}}
+		req = withApp(req, app)
+		req.SetPathValue("channel_name", "cache-channel")
 
-		ChannelShow(c, server)
+		ChannelShow(w, req, server)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
@@ -435,14 +410,12 @@ func TestChannelShow(t *testing.T) {
 		adapter.channelSocketsCount = 6
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		req := httptest.NewRequest("GET", "/channels/presence-channel?info=user_count,subscription_count", nil)
-		c.Request = req
-		c.Params = gin.Params{{Key: "channel_name", Value: "presence-channel"}}
+		req = withApp(req, app)
+		req.SetPathValue("channel_name", "presence-channel")
 
-		ChannelShow(c, server)
+		ChannelShow(w, req, server)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
@@ -460,13 +433,11 @@ func TestChannelShow(t *testing.T) {
 		defer cancel()
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
 
 		req := httptest.NewRequest("GET", "/channels/public-channel", nil)
-		c.Request = req
-		c.Params = gin.Params{{Key: "channel_name", Value: "public-channel"}}
+		req.SetPathValue("channel_name", "public-channel")
 
-		ChannelShow(c, server)
+		ChannelShow(w, req, server)
 
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 
@@ -484,14 +455,12 @@ func TestChannelShow(t *testing.T) {
 		adapter.channelMembersCount = 3
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		req := httptest.NewRequest("GET", "/channels/public-channel?info=user_count", nil)
-		c.Request = req
-		c.Params = gin.Params{{Key: "channel_name", Value: "public-channel"}}
+		req = withApp(req, app)
+		req.SetPathValue("channel_name", "public-channel")
 
-		ChannelShow(c, server)
+		ChannelShow(w, req, server)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
@@ -505,8 +474,6 @@ func TestChannelShow(t *testing.T) {
 }
 
 func TestChannelUsers(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
 	t.Run("PresenceChannelUsers", func(t *testing.T) {
 		server, adapter, _, cancel := createTestServerForApiChannels()
 		defer cancel()
@@ -520,14 +487,12 @@ func TestChannelUsers(t *testing.T) {
 		}
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		req := httptest.NewRequest("GET", "/channels/presence-channel/users", nil)
-		c.Request = req
-		c.Params = gin.Params{{Key: "channel_name", Value: "presence-channel"}}
+		req = withApp(req, app)
+		req.SetPathValue("channel_name", "presence-channel")
 
-		ChannelUsers(c, server)
+		ChannelUsers(w, req, server)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
@@ -552,14 +517,12 @@ func TestChannelUsers(t *testing.T) {
 		app := createTestAppForApiChannels()
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		req := httptest.NewRequest("GET", "/channels/public-channel/users", nil)
-		c.Request = req
-		c.Params = gin.Params{{Key: "channel_name", Value: "public-channel"}}
+		req = withApp(req, app)
+		req.SetPathValue("channel_name", "public-channel")
 
-		ChannelUsers(c, server)
+		ChannelUsers(w, req, server)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 
@@ -575,14 +538,12 @@ func TestChannelUsers(t *testing.T) {
 		app := createTestAppForApiChannels()
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		req := httptest.NewRequest("GET", "/channels//users", nil)
-		c.Request = req
-		c.Params = gin.Params{{Key: "channel_name", Value: ""}}
+		req = withApp(req, app)
+		req.SetPathValue("channel_name", "")
 
-		ChannelUsers(c, server)
+		ChannelUsers(w, req, server)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 
@@ -597,13 +558,11 @@ func TestChannelUsers(t *testing.T) {
 		defer cancel()
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
 
 		req := httptest.NewRequest("GET", "/channels/presence-channel/users", nil)
-		c.Request = req
-		c.Params = gin.Params{{Key: "channel_name", Value: "presence-channel"}}
+		req.SetPathValue("channel_name", "presence-channel")
 
-		ChannelUsers(c, server)
+		ChannelUsers(w, req, server)
 
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 
@@ -622,14 +581,12 @@ func TestChannelUsers(t *testing.T) {
 		adapter.channelMembers = map[constants.SocketID]*pusherClient.MemberData{}
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		req := httptest.NewRequest("GET", "/channels/presence-channel/users", nil)
-		c.Request = req
-		c.Params = gin.Params{{Key: "channel_name", Value: "presence-channel"}}
+		req = withApp(req, app)
+		req.SetPathValue("channel_name", "presence-channel")
 
-		ChannelUsers(c, server)
+		ChannelUsers(w, req, server)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
@@ -641,22 +598,18 @@ func TestChannelUsers(t *testing.T) {
 }
 
 func TestApiChannels_TerminateUserConnections(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
 	t.Run("SuccessfulTermination", func(t *testing.T) {
 		server, _, _, cancel := createTestServerForApiChannels()
 		defer cancel()
 		app := createTestAppForApiChannels()
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		req := httptest.NewRequest("POST", "/users/user-123/terminate_connections", nil)
-		c.Request = req
-		c.Params = gin.Params{{Key: "user_id", Value: "user-123"}}
+		req = withApp(req, app)
+		req.SetPathValue("user_id", "user-123")
 
-		TerminateUserConnections(c, server)
+		TerminateUserConnections(w, req, server)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
@@ -672,14 +625,12 @@ func TestApiChannels_TerminateUserConnections(t *testing.T) {
 		app := createTestAppForApiChannels()
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		req := httptest.NewRequest("POST", "/users//terminate_connections", nil)
-		c.Request = req
-		c.Params = gin.Params{{Key: "user_id", Value: ""}}
+		req = withApp(req, app)
+		req.SetPathValue("user_id", "")
 
-		TerminateUserConnections(c, server)
+		TerminateUserConnections(w, req, server)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 
@@ -694,13 +645,11 @@ func TestApiChannels_TerminateUserConnections(t *testing.T) {
 		defer cancel()
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
 
 		req := httptest.NewRequest("POST", "/users/user-123/terminate_connections", nil)
-		c.Request = req
-		c.Params = gin.Params{{Key: "user_id", Value: "user-123"}}
+		req.SetPathValue("user_id", "user-123")
 
-		TerminateUserConnections(c, server)
+		TerminateUserConnections(w, req, server)
 
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 
@@ -712,8 +661,6 @@ func TestApiChannels_TerminateUserConnections(t *testing.T) {
 }
 
 func TestApiChannels_EdgeCases(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
 	t.Run("ChannelIndexWithSpecialCharacters", func(t *testing.T) {
 		server, adapter, _, cancel := createTestServerForApiChannels()
 		defer cancel()
@@ -727,13 +674,11 @@ func TestApiChannels_EdgeCases(t *testing.T) {
 		}
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		req := httptest.NewRequest("GET", "/channels", nil)
-		c.Request = req
+		req = withApp(req, app)
 
-		ChannelIndex(c, server)
+		ChannelIndex(w, req, server)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
@@ -751,14 +696,12 @@ func TestApiChannels_EdgeCases(t *testing.T) {
 		adapter.channelSocketsCount = 5
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		req := httptest.NewRequest("GET", "/channels/public-channel?info=", nil)
-		c.Request = req
-		c.Params = gin.Params{{Key: "channel_name", Value: "public-channel"}}
+		req = withApp(req, app)
+		req.SetPathValue("channel_name", "public-channel")
 
-		ChannelShow(c, server)
+		ChannelShow(w, req, server)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
@@ -781,14 +724,12 @@ func TestApiChannels_EdgeCases(t *testing.T) {
 		adapter.channelMembers = nil
 
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set("app", app)
 
 		req := httptest.NewRequest("GET", "/channels/presence-channel/users", nil)
-		c.Request = req
-		c.Params = gin.Params{{Key: "channel_name", Value: "presence-channel"}}
+		req = withApp(req, app)
+		req.SetPathValue("channel_name", "presence-channel")
 
-		ChannelUsers(c, server)
+		ChannelUsers(w, req, server)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
@@ -800,8 +741,6 @@ func TestApiChannels_EdgeCases(t *testing.T) {
 }
 
 func TestApiChannels_Integration(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
 	t.Run("FullWorkflow", func(t *testing.T) {
 		server, adapter, _, cancel := createTestServerForApiChannels()
 		defer cancel()
@@ -823,41 +762,33 @@ func TestApiChannels_Integration(t *testing.T) {
 
 		// Test ChannelIndex
 		w1 := httptest.NewRecorder()
-		c1, _ := gin.CreateTestContext(w1)
-		c1.Set("app", app)
 		req1 := httptest.NewRequest("GET", "/channels", nil)
-		c1.Request = req1
-		ChannelIndex(c1, server)
+		req1 = withApp(req1, app)
+		ChannelIndex(w1, req1, server)
 		assert.Equal(t, http.StatusOK, w1.Code)
 
 		// Test ChannelShow
 		w2 := httptest.NewRecorder()
-		c2, _ := gin.CreateTestContext(w2)
-		c2.Set("app", app)
 		req2 := httptest.NewRequest("GET", "/channels/presence-channel?info=user_count,subscription_count", nil)
-		c2.Request = req2
-		c2.Params = gin.Params{{Key: "channel_name", Value: "presence-channel"}}
-		ChannelShow(c2, server)
+		req2 = withApp(req2, app)
+		req2.SetPathValue("channel_name", "presence-channel")
+		ChannelShow(w2, req2, server)
 		assert.Equal(t, http.StatusOK, w2.Code)
 
 		// Test ChannelUsers
 		w3 := httptest.NewRecorder()
-		c3, _ := gin.CreateTestContext(w3)
-		c3.Set("app", app)
 		req3 := httptest.NewRequest("GET", "/channels/presence-channel/users", nil)
-		c3.Request = req3
-		c3.Params = gin.Params{{Key: "channel_name", Value: "presence-channel"}}
-		ChannelUsers(c3, server)
+		req3 = withApp(req3, app)
+		req3.SetPathValue("channel_name", "presence-channel")
+		ChannelUsers(w3, req3, server)
 		assert.Equal(t, http.StatusOK, w3.Code)
 
 		// Test TerminateUserConnections
 		w4 := httptest.NewRecorder()
-		c4, _ := gin.CreateTestContext(w4)
-		c4.Set("app", app)
 		req4 := httptest.NewRequest("POST", "/users/user-1/terminate_connections", nil)
-		c4.Request = req4
-		c4.Params = gin.Params{{Key: "user_id", Value: "user-1"}}
-		TerminateUserConnections(c4, server)
+		req4 = withApp(req4, app)
+		req4.SetPathValue("user_id", "user-1")
+		TerminateUserConnections(w4, req4, server)
 		assert.Equal(t, http.StatusOK, w4.Code)
 	})
 }

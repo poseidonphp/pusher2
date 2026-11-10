@@ -2,11 +2,10 @@ package internal
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 
-	"github.com/gin-gonic/gin"
 	pusherClient "github.com/pusher/pusher-http-go/v5"
-	"github.com/thoas/go-funk"
 	"pusher/internal/cache"
 
 	"pusher/internal/constants"
@@ -15,13 +14,12 @@ import (
 	"pusher/log"
 )
 
-func ChannelIndex(c *gin.Context, server *Server) {
-	filterByPrefix := c.Query("filter_by_prefix")
-	info := c.Query("info")
-	app, exists := getAppFromContext(c)
+func ChannelIndex(w http.ResponseWriter, r *http.Request, server *Server) {
+	filterByPrefix := r.URL.Query().Get("filter_by_prefix")
+	info := r.URL.Query().Get("info")
+	app, exists := getAppFromContext(r)
 	if !exists {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "App not found in context"})
-		c.Abort()
+		writeError(w, http.StatusInternalServerError, "App not found in context")
 		return
 	}
 
@@ -34,10 +32,10 @@ func ChannelIndex(c *gin.Context, server *Server) {
 	infoFields := strings.FieldsFunc(info, splitFn)
 
 	// check if infoFields contains user_count
-	getUserCount := funk.Contains(infoFields, "user_count")
+	getUserCount := slices.Contains(infoFields, "user_count")
 
 	if filterByPrefix != "presence-" && getUserCount {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "info=user_count requires filter_by_prefix for presence channels"})
+		writeError(w, http.StatusBadRequest, "info=user_count requires filter_by_prefix for presence channels")
 		return
 	}
 
@@ -70,19 +68,18 @@ func ChannelIndex(c *gin.Context, server *Server) {
 
 	}
 
-	c.JSON(http.StatusOK, data)
+	writeJSON(w, http.StatusOK, data)
 }
 
-func ChannelShow(c *gin.Context, server *Server) {
-	app, exists := getAppFromContext(c)
+func ChannelShow(w http.ResponseWriter, r *http.Request, server *Server) {
+	app, exists := getAppFromContext(r)
 	if !exists {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "App not found in context"})
-		c.Abort()
+		writeError(w, http.StatusInternalServerError, "App not found in context")
 		return
 	}
 
-	channel := constants.ChannelName(c.Param("channel_name"))
-	info := c.Query("info")
+	channel := constants.ChannelName(r.PathValue("channel_name"))
+	info := r.URL.Query().Get("info")
 
 	splitFn := func(c rune) bool {
 		return c == ','
@@ -96,17 +93,17 @@ func ChannelShow(c *gin.Context, server *Server) {
 
 	data.Name = string(channel)
 
-	if funk.Contains(infoFields, "user_count") && util.IsPresenceChannel(channel) {
+	if slices.Contains(infoFields, "user_count") && util.IsPresenceChannel(channel) {
 		data.UserCount = server.Adapter.GetChannelMembersCount(app.ID, channel, false)
 		data.Occupied = data.UserCount > 0
 	}
 
-	if funk.Contains(infoFields, "subscription_count") {
+	if slices.Contains(infoFields, "subscription_count") {
 		data.SubscriptionCount = int(server.Adapter.GetChannelSocketsCount(app.ID, channel, false))
 		data.Occupied = data.SubscriptionCount > 0
 	}
 
-	if funk.Contains(infoFields, "cache") && util.IsCacheChannel(channel) {
+	if slices.Contains(infoFields, "cache") && util.IsCacheChannel(channel) {
 		cacheKey := cache.GetChannelCacheKey(app.ID, channel)
 		cachedData, cacheExists := server.CacheManager.Get(cacheKey)
 		if cacheExists {
@@ -114,26 +111,25 @@ func ChannelShow(c *gin.Context, server *Server) {
 		}
 	}
 
-	c.JSON(http.StatusOK, data)
+	writeJSON(w, http.StatusOK, data)
 }
 
-func ChannelUsers(c *gin.Context, server *Server) {
-	app, exists := getAppFromContext(c)
+func ChannelUsers(w http.ResponseWriter, r *http.Request, server *Server) {
+	app, exists := getAppFromContext(r)
 	if !exists {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "App not found in context"})
-		c.Abort()
+		writeError(w, http.StatusInternalServerError, "App not found in context")
 		return
 	}
 
-	if c.Param("channel_name") == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Channel name required"})
+	if r.PathValue("channel_name") == "" {
+		writeError(w, http.StatusBadRequest, "Channel name required")
 		return
 	}
 
-	channel := c.Param("channel_name")
+	channel := r.PathValue("channel_name")
 
 	if !util.IsPresenceChannel(channel) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "presence only"})
+		writeError(w, http.StatusBadRequest, "presence only")
 		return
 	}
 
@@ -146,23 +142,22 @@ func ChannelUsers(c *gin.Context, server *Server) {
 		data.List = append(data.List, pusherClient.User{ID: id})
 	}
 
-	c.JSON(http.StatusOK, data)
+	writeJSON(w, http.StatusOK, data)
 }
 
-func TerminateUserConnections(c *gin.Context, server *Server) {
-	app, exists := getAppFromContext(c)
+func TerminateUserConnections(w http.ResponseWriter, r *http.Request, server *Server) {
+	app, exists := getAppFromContext(r)
 	if !exists {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "App not found in context"})
-		c.Abort()
+		writeError(w, http.StatusInternalServerError, "App not found in context")
 		return
 	}
 
-	userID := c.Param("user_id")
+	userID := r.PathValue("user_id")
 	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Channel name required"})
+		writeError(w, http.StatusBadRequest, "Channel name required")
 		return
 	}
 	server.Adapter.TerminateUserConnections(app.ID, userID)
-	c.JSON(http.StatusOK, gin.H{})
+	writeEmptyJSON(w)
 
 }

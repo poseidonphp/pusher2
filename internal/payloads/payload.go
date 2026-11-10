@@ -241,9 +241,9 @@ func getFallbackSerializationError() []byte {
 }
 
 type PusherApiMessage struct {
-	Name     string                  `json:"name,omitempty" form:"name" binding:"required"`
-	Data     string                  `json:"data,omitempty" form:"data" binding:"required"`
-	Channel  constants.ChannelName   `json:"channel,omitempty" form:"channel,omitempty" binding:"required_without=Channels"`
-	Channels []constants.ChannelName `json:"channels,omitempty" form:"channels,omitempty" binding:"required_without=Channel"`
+	Name     string                  `json:"name,omitempty"`
+	Data     string                  `json:"data,omitempty"`
+	Channel  constants.ChannelName   `json:"channel,omitempty"`
+	Channels []constants.ChannelName `json:"channels,omitempty"`
 	SocketID constants.SocketID      `json:"socket_id,omitempty"`
 }

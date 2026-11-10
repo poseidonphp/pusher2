@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 
@@ -118,6 +117,13 @@ func createTestRequestWithSignature(method, url, body, secret string) *http.Requ
 	return req
 }
 
+// newTestRouter serves handler at pattern behind the given middlewares.
+func newTestRouter(pattern string, handler http.HandlerFunc, middlewares ...middleware) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.Handle(pattern, chain(handler, middlewares...))
+	return mux
+}
+
 // Helper function to prepare query string for signature generation (copied from util/signature.go)
 func prepareQueryStringForTest(params url.Values) string {
 	var keys []string
@@ -137,30 +143,28 @@ func prepareQueryStringForTest(params url.Values) string {
 
 func TestGetAppFromContext(t *testing.T) {
 	t.Run("AppExists", func(t *testing.T) {
-		c, _ := gin.CreateTestContext(httptest.NewRecorder())
 		app := createTestAppForMiddleware()
-		c.Set("app", app)
+		req := withApp(httptest.NewRequest("GET", "/", nil), app)
 
-		retrievedApp, exists := getAppFromContext(c)
+		retrievedApp, exists := getAppFromContext(req)
 
 		assert.True(t, exists)
 		assert.Equal(t, app, retrievedApp)
 	})
 
 	t.Run("AppNotExists", func(t *testing.T) {
-		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		req := httptest.NewRequest("GET", "/", nil)
 
-		retrievedApp, exists := getAppFromContext(c)
+		retrievedApp, exists := getAppFromContext(req)
 
 		assert.False(t, exists)
 		assert.Nil(t, retrievedApp)
 	})
 
-	t.Run("AppWrongType", func(t *testing.T) {
-		c, _ := gin.CreateTestContext(httptest.NewRecorder())
-		c.Set("app", "not-an-app")
+	t.Run("AppNil", func(t *testing.T) {
+		req := withApp(httptest.NewRequest("GET", "/", nil), nil)
 
-		retrievedApp, exists := getAppFromContext(c)
+		retrievedApp, exists := getAppFromContext(req)
 
 		assert.False(t, exists)
 		assert.Nil(t, retrievedApp)
@@ -171,11 +175,9 @@ func TestAppMiddleware(t *testing.T) {
 	t.Run("ValidAppID", func(t *testing.T) {
 		server, _ := createTestServerForMiddleware()
 
-		router := gin.New()
-		router.Use(AppMiddleware(server))
-		router.GET("/apps/:app_id/test", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"message": "success"})
-		})
+		router := newTestRouter("GET /apps/{app_id}/test", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]string{"message": "success"})
+		}, AppMiddleware(server))
 
 		req := httptest.NewRequest("GET", "/apps/test-app/test", nil)
 		w := httptest.NewRecorder()
@@ -189,11 +191,9 @@ func TestAppMiddleware(t *testing.T) {
 	t.Run("InvalidAppID", func(t *testing.T) {
 		server, _ := createTestServerForMiddleware()
 
-		router := gin.New()
-		router.Use(AppMiddleware(server))
-		router.GET("/apps/:app_id/test", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"message": "success"})
-		})
+		router := newTestRouter("GET /apps/{app_id}/test", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]string{"message": "success"})
+		}, AppMiddleware(server))
 
 		req := httptest.NewRequest("GET", "/apps/nonexistent-app/test", nil)
 		w := httptest.NewRecorder()
@@ -207,19 +207,17 @@ func TestAppMiddleware(t *testing.T) {
 	t.Run("AppInContext", func(t *testing.T) {
 		server, appManager := createTestServerForMiddleware()
 
-		router := gin.New()
-		router.Use(AppMiddleware(server))
-		router.GET("/apps/:app_id/test", func(c *gin.Context) {
+		router := newTestRouter("GET /apps/{app_id}/test", func(w http.ResponseWriter, r *http.Request) {
 			// Check if app was set in context
-			appFromContext, exists := c.Get("app")
+			appFromContext, exists := getAppFromContext(r)
 			assert.True(t, exists)
 
 			// Get the expected app from the app manager
 			expectedApp, err := appManager.FindByID("test-app")
 			assert.NoError(t, err)
 			assert.Equal(t, expectedApp, appFromContext)
-			c.JSON(http.StatusOK, gin.H{"message": "success"})
-		})
+			writeJSON(w, http.StatusOK, map[string]string{"message": "success"})
+		}, AppMiddleware(server))
 
 		req := httptest.NewRequest("GET", "/apps/test-app/test", nil)
 		w := httptest.NewRecorder()
@@ -234,12 +232,9 @@ func TestSignatureMiddleware(t *testing.T) {
 	t.Run("ValidSignature", func(t *testing.T) {
 		server, appManager := createTestServerForMiddleware()
 
-		router := gin.New()
-		router.Use(AppMiddleware(server))
-		router.Use(SignatureMiddleware(server))
-		router.POST("/apps/:app_id/events", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"message": "success"})
-		})
+		router := newTestRouter("POST /apps/{app_id}/events", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]string{"message": "success"})
+		}, AppMiddleware(server), SignatureMiddleware(server))
 
 		// Get the app secret from the app manager
 		app, err := appManager.FindByID("test-app")
@@ -258,12 +253,9 @@ func TestSignatureMiddleware(t *testing.T) {
 	t.Run("InvalidSignature", func(t *testing.T) {
 		server, _ := createTestServerForMiddleware()
 
-		router := gin.New()
-		router.Use(AppMiddleware(server))
-		router.Use(SignatureMiddleware(server))
-		router.POST("/apps/:app_id/events", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"message": "success"})
-		})
+		router := newTestRouter("POST /apps/{app_id}/events", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]string{"message": "success"})
+		}, AppMiddleware(server), SignatureMiddleware(server))
 
 		body := `{"name": "test-event", "channel": "test-channel", "data": "test-data"}`
 		req := createTestRequestWithSignature("POST", "/apps/test-app/events", body, "wrong-secret")
@@ -278,11 +270,9 @@ func TestSignatureMiddleware(t *testing.T) {
 	t.Run("NoAppInContext", func(t *testing.T) {
 		server, _ := createTestServerForMiddleware()
 
-		router := gin.New()
-		router.Use(SignatureMiddleware(server))
-		router.POST("/events", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"message": "success"})
-		})
+		router := newTestRouter("POST /events", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]string{"message": "success"})
+		}, SignatureMiddleware(server))
 
 		req := httptest.NewRequest("POST", "/events", strings.NewReader("{}"))
 		w := httptest.NewRecorder()
@@ -296,12 +286,9 @@ func TestSignatureMiddleware(t *testing.T) {
 	t.Run("MissingSignature", func(t *testing.T) {
 		server, _ := createTestServerForMiddleware()
 
-		router := gin.New()
-		router.Use(AppMiddleware(server))
-		router.Use(SignatureMiddleware(server))
-		router.POST("/apps/:app_id/events", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"message": "success"})
-		})
+		router := newTestRouter("POST /apps/{app_id}/events", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]string{"message": "success"})
+		}, AppMiddleware(server), SignatureMiddleware(server))
 
 		req := httptest.NewRequest("POST", "/apps/test-app/events", strings.NewReader("{}"))
 		w := httptest.NewRecorder()
@@ -317,11 +304,9 @@ func TestCorsMiddleware(t *testing.T) {
 	t.Run("CorsMiddlewareExecutes", func(t *testing.T) {
 		server, _ := createTestServerForMiddleware()
 
-		router := gin.New()
-		router.Use(CorsMiddleware(server))
-		router.GET("/test", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"message": "success"})
-		})
+		router := newTestRouter("GET /test", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]string{"message": "success"})
+		}, CorsMiddleware(server))
 
 		req := httptest.NewRequest("GET", "/test", nil)
 		w := httptest.NewRecorder()
@@ -336,12 +321,10 @@ func TestCorsMiddleware(t *testing.T) {
 		server, _ := createTestServerForMiddleware()
 		executed := false
 
-		router := gin.New()
-		router.Use(CorsMiddleware(server))
-		router.GET("/test", func(c *gin.Context) {
+		router := newTestRouter("GET /test", func(w http.ResponseWriter, r *http.Request) {
 			executed = true
-			c.JSON(http.StatusOK, gin.H{"message": "success"})
-		})
+			writeJSON(w, http.StatusOK, map[string]string{"message": "success"})
+		}, CorsMiddleware(server))
 
 		req := httptest.NewRequest("GET", "/test", nil)
 		w := httptest.NewRecorder()
@@ -357,11 +340,9 @@ func TestRateLimiterMiddleware(t *testing.T) {
 	t.Run("RateLimiterMiddlewareExecutes", func(t *testing.T) {
 		server, _ := createTestServerForMiddleware()
 
-		router := gin.New()
-		router.Use(RateLimiterMiddleware(server))
-		router.GET("/test", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"message": "success"})
-		})
+		router := newTestRouter("GET /test", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]string{"message": "success"})
+		}, RateLimiterMiddleware(server))
 
 		req := httptest.NewRequest("GET", "/test", nil)
 		w := httptest.NewRecorder()
@@ -376,12 +357,10 @@ func TestRateLimiterMiddleware(t *testing.T) {
 		server, _ := createTestServerForMiddleware()
 		executed := false
 
-		router := gin.New()
-		router.Use(RateLimiterMiddleware(server))
-		router.GET("/test", func(c *gin.Context) {
+		router := newTestRouter("GET /test", func(w http.ResponseWriter, r *http.Request) {
 			executed = true
-			c.JSON(http.StatusOK, gin.H{"message": "success"})
-		})
+			writeJSON(w, http.StatusOK, map[string]string{"message": "success"})
+		}, RateLimiterMiddleware(server))
 
 		req := httptest.NewRequest("GET", "/test", nil)
 		w := httptest.NewRecorder()
@@ -400,11 +379,9 @@ func TestLoggerMiddleware(t *testing.T) {
 		logger.SetOutput(&logOutput)
 		logger.SetLevel(logrus.InfoLevel)
 
-		router := gin.New()
-		router.Use(LoggerMiddleware(logger))
-		router.GET("/test", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"message": "success"})
-		})
+		router := newTestRouter("GET /test", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]string{"message": "success"})
+		}, LoggerMiddleware(logger))
 
 		req := httptest.NewRequest("GET", "/test", nil)
 		req.Header.Set("User-Agent", "test-agent")
@@ -430,11 +407,9 @@ func TestLoggerMiddleware(t *testing.T) {
 		logger.SetOutput(&logOutput)
 		logger.SetLevel(logrus.InfoLevel)
 
-		router := gin.New()
-		router.Use(LoggerMiddleware(logger))
-		router.GET("/test", func(c *gin.Context) {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-		})
+		router := newTestRouter("GET /test", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		}, LoggerMiddleware(logger))
 
 		req := httptest.NewRequest("GET", "/test", nil)
 		w := httptest.NewRecorder()
@@ -454,11 +429,9 @@ func TestLoggerMiddleware(t *testing.T) {
 		logger.SetOutput(&logOutput)
 		logger.SetLevel(logrus.InfoLevel)
 
-		router := gin.New()
-		router.Use(LoggerMiddleware(logger))
-		router.GET("/test", func(c *gin.Context) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "bad request"})
-		})
+		router := newTestRouter("GET /test", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad request"})
+		}, LoggerMiddleware(logger))
 
 		req := httptest.NewRequest("GET", "/test", nil)
 		w := httptest.NewRecorder()
@@ -472,44 +445,17 @@ func TestLoggerMiddleware(t *testing.T) {
 		assert.Contains(t, logContent, "400")
 	})
 
-	t.Run("GinErrors", func(t *testing.T) {
-		logger := logrus.New()
-		var logOutput bytes.Buffer
-		logger.SetOutput(&logOutput)
-		logger.SetLevel(logrus.InfoLevel)
-
-		router := gin.New()
-		router.Use(LoggerMiddleware(logger))
-		router.GET("/test", func(c *gin.Context) {
-			c.Error(fmt.Errorf("test error"))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-		})
-
-		req := httptest.NewRequest("GET", "/test", nil)
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
-
-		// Check that error log was written
-		logContent := logOutput.String()
-		assert.Contains(t, logContent, "test error")
-	})
-
 	t.Run("LatencyCalculation", func(t *testing.T) {
 		logger := logrus.New()
 		var logOutput bytes.Buffer
 		logger.SetOutput(&logOutput)
 		logger.SetLevel(logrus.InfoLevel)
 
-		router := gin.New()
-		router.Use(LoggerMiddleware(logger))
-		router.GET("/test", func(c *gin.Context) {
+		router := newTestRouter("GET /test", func(w http.ResponseWriter, r *http.Request) {
 			// Simulate some processing time
 			time.Sleep(10 * time.Millisecond)
-			c.JSON(http.StatusOK, gin.H{"message": "success"})
-		})
+			writeJSON(w, http.StatusOK, map[string]string{"message": "success"})
+		}, LoggerMiddleware(logger))
 
 		req := httptest.NewRequest("GET", "/test", nil)
 		w := httptest.NewRecorder()
@@ -523,19 +469,16 @@ func TestLoggerMiddleware(t *testing.T) {
 		assert.Contains(t, logContent, "latency")
 	})
 
-	t.Run("NegativeDataLength", func(t *testing.T) {
+	t.Run("DataLength", func(t *testing.T) {
 		logger := logrus.New()
 		var logOutput bytes.Buffer
 		logger.SetOutput(&logOutput)
 		logger.SetLevel(logrus.InfoLevel)
 
-		router := gin.New()
-		router.Use(LoggerMiddleware(logger))
-		router.GET("/test", func(c *gin.Context) {
-			// Set a negative size to test the handling
-			c.Writer.WriteHeader(http.StatusOK)
-			c.Writer.WriteString("test")
-		})
+		router := newTestRouter("GET /test", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("test"))
+		}, LoggerMiddleware(logger))
 
 		req := httptest.NewRequest("GET", "/test", nil)
 		w := httptest.NewRecorder()
@@ -555,11 +498,9 @@ func TestLoggerMiddleware(t *testing.T) {
 		logger.SetOutput(&logOutput)
 		logger.SetLevel(logrus.InfoLevel)
 
-		router := gin.New()
-		router.Use(LoggerMiddleware(logger))
-		router.GET("/test", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"message": "success"})
-		})
+		router := newTestRouter("GET /test", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]string{"message": "success"})
+		}, LoggerMiddleware(logger))
 
 		req := httptest.NewRequest("GET", "/test", nil)
 		req.RemoteAddr = "192.168.1.1:12345"
@@ -584,15 +525,9 @@ func TestMiddlewareIntegration(t *testing.T) {
 		logger.SetOutput(&logOutput)
 		logger.SetLevel(logrus.InfoLevel)
 
-		router := gin.New()
-		router.Use(LoggerMiddleware(logger))
-		router.Use(CorsMiddleware(server))
-		router.Use(RateLimiterMiddleware(server))
-		router.Use(AppMiddleware(server))
-		router.Use(SignatureMiddleware(server))
-		router.POST("/apps/:app_id/events", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"message": "success"})
-		})
+		router := newTestRouter("POST /apps/{app_id}/events", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]string{"message": "success"})
+		}, LoggerMiddleware(logger), CorsMiddleware(server), RateLimiterMiddleware(server), AppMiddleware(server), SignatureMiddleware(server))
 
 		// Get the app secret from the app manager
 		app, err := appManager.FindByID("test-app")
@@ -622,15 +557,9 @@ func TestMiddlewareIntegration(t *testing.T) {
 		logger.SetOutput(&logOutput)
 		logger.SetLevel(logrus.InfoLevel)
 
-		router := gin.New()
-		router.Use(LoggerMiddleware(logger))
-		router.Use(CorsMiddleware(server))
-		router.Use(RateLimiterMiddleware(server))
-		router.Use(AppMiddleware(server))
-		router.Use(SignatureMiddleware(server))
-		router.POST("/apps/:app_id/events", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"message": "success"})
-		})
+		router := newTestRouter("POST /apps/{app_id}/events", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]string{"message": "success"})
+		}, LoggerMiddleware(logger), CorsMiddleware(server), RateLimiterMiddleware(server), AppMiddleware(server), SignatureMiddleware(server))
 
 		req := httptest.NewRequest("POST", "/apps/nonexistent-app/events", strings.NewReader("{}"))
 		w := httptest.NewRecorder()
@@ -644,6 +573,71 @@ func TestMiddlewareIntegration(t *testing.T) {
 		logContent := logOutput.String()
 		assert.Contains(t, logContent, "404")
 	})
+}
+
+func TestRecoveryMiddleware(t *testing.T) {
+	t.Run("PanicReturns500", func(t *testing.T) {
+		router := newTestRouter("GET /test", func(w http.ResponseWriter, r *http.Request) {
+			panic("boom")
+		}, RecoveryMiddleware)
+
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest("GET", "/test", nil))
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+
+	t.Run("AbortHandlerPropagates", func(t *testing.T) {
+		router := newTestRouter("GET /test", func(w http.ResponseWriter, r *http.Request) {
+			panic(http.ErrAbortHandler)
+		}, RecoveryMiddleware)
+
+		assert.PanicsWithValue(t, http.ErrAbortHandler, func() {
+			router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/test", nil))
+		})
+	})
+}
+
+func TestWriteJSON(t *testing.T) {
+	t.Run("HeadersAndBody", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		writeJSON(w, http.StatusCreated, map[string]string{"b": "2", "a": "1"})
+
+		assert.Equal(t, http.StatusCreated, w.Code)
+		assert.Equal(t, "application/json; charset=utf-8", w.Header().Get("Content-Type"))
+		assert.Equal(t, `{"a":"1","b":"2"}`, w.Body.String())
+	})
+
+	t.Run("OmitEmptyKeepsLegacySemantics", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		writeJSON(w, http.StatusOK, struct {
+			Count    int  `json:"count,omitempty"`
+			Occupied bool `json:"occupied,omitempty"`
+			Name     string
+		}{Name: "x"})
+
+		assert.Equal(t, `{"Name":"x"}`, w.Body.String())
+	})
+
+	t.Run("EmptyObject", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		writeEmptyJSON(w)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, `{}`, w.Body.String())
+	})
+}
+
+func TestClientIP(t *testing.T) {
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "10.0.0.1:1234"
+	assert.Equal(t, "10.0.0.1", clientIP(req))
+
+	req.Header.Set("X-Real-IP", "10.0.0.2")
+	assert.Equal(t, "10.0.0.2", clientIP(req))
+
+	req.Header.Set("X-Forwarded-For", "203.0.113.5, 10.0.0.3")
+	assert.Equal(t, "203.0.113.5", clientIP(req))
 }
 
 func TestTimeFormat(t *testing.T) {
@@ -662,11 +656,9 @@ func TestTimeFormat(t *testing.T) {
 func TestEdgeCases(t *testing.T) {
 	t.Run("NilServerInMiddleware", func(t *testing.T) {
 		// Test that middlewares handle nil server gracefully
-		router := gin.New()
-		router.Use(AppMiddleware(nil))
-		router.GET("/test", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"message": "success"})
-		})
+		router := newTestRouter("GET /test", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]string{"message": "success"})
+		}, AppMiddleware(nil))
 
 		req := httptest.NewRequest("GET", "/test", nil)
 		w := httptest.NewRecorder()
@@ -680,29 +672,26 @@ func TestEdgeCases(t *testing.T) {
 	t.Run("EmptyAppID", func(t *testing.T) {
 		server, _ := createTestServerForMiddleware()
 
-		router := gin.New()
-		router.Use(AppMiddleware(server))
-		router.GET("/apps/:app_id/test", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"message": "success"})
-		})
+		router := newTestRouter("GET /apps/{app_id}/test", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]string{"message": "success"})
+		}, AppMiddleware(server))
 
 		req := httptest.NewRequest("GET", "/apps//test", nil)
 		w := httptest.NewRecorder()
 
 		router.ServeHTTP(w, req)
 
-		assert.Equal(t, http.StatusNotFound, w.Code)
+		// ServeMux redirects the uncleaned path; the handler never runs.
+		assert.NotEqual(t, http.StatusOK, w.Code)
 	})
 
 	t.Run("VeryLongAppID", func(t *testing.T) {
 		server, _ := createTestServerForMiddleware()
 		longAppID := strings.Repeat("a", 1000)
 
-		router := gin.New()
-		router.Use(AppMiddleware(server))
-		router.GET("/apps/:app_id/test", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"message": "success"})
-		})
+		router := newTestRouter("GET /apps/{app_id}/test", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]string{"message": "success"})
+		}, AppMiddleware(server))
 
 		req := httptest.NewRequest("GET", "/apps/"+longAppID+"/test", nil)
 		w := httptest.NewRecorder()

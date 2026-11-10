@@ -2,6 +2,7 @@ package internal
 
 import (
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 type MockHorizontalInterface struct {
 	channelName    string
 	numSub         int64
+	mu             sync.Mutex
 	broadcastCalls []BroadcastCall
 }
 
@@ -38,6 +40,8 @@ func (m *MockHorizontalInterface) GetChannelName() string {
 }
 
 func (m *MockHorizontalInterface) broadcastToChannel(channel string, data string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.broadcastCalls = append(m.broadcastCalls, BroadcastCall{
 		Channel: channel,
 		Data:    data,
@@ -49,10 +53,14 @@ func (m *MockHorizontalInterface) getNumSub() (int64, error) {
 }
 
 func (m *MockHorizontalInterface) GetBroadcastCalls() []BroadcastCall {
-	return m.broadcastCalls
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]BroadcastCall(nil), m.broadcastCalls...)
 }
 
 func (m *MockHorizontalInterface) ResetBroadcastCalls() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.broadcastCalls = make([]BroadcastCall, 0)
 }
 
