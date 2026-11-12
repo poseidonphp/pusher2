@@ -278,6 +278,14 @@ func loadAdapter(ctx context.Context, conf *config.ServerConfig, metricsManager 
 		if err != nil {
 			return nil, err
 		}
+	case "nats":
+		if conf.NatsInstance == nil {
+			return nil, errors.New("nats instance not configured")
+		}
+		adapter, err = NewNatsAdapter(ctx, conf.NatsInstance.Conn, conf.NatsPrefix, "int", metricsManager)
+		if err != nil {
+			return nil, err
+		}
 	case "local":
 		adapter = NewLocalAdapter(metricsManager)
 		err = adapter.Init()
@@ -337,6 +345,14 @@ func loadCacheManager(ctx context.Context, conf *config.ServerConfig) (cache.Cac
 		cacheManager = &cache.RedisCache{
 			Client: conf.RedisInstance.Client,
 			Prefix: conf.RedisPrefix,
+		}
+	case "nats":
+		if conf.NatsInstance == nil {
+			return nil, errors.New("nats instance not configured")
+		}
+		cacheManager = &cache.NatsCache{
+			Client: conf.NatsInstance.JS,
+			Prefix: conf.NatsPrefix,
 		}
 	default:
 		cacheManager = &cache.LocalCache{}
