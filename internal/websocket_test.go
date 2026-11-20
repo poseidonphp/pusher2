@@ -243,6 +243,40 @@ func TestWebSocketPingPong(t *testing.T) {
 	fmt.Println("finished pingpong")
 }
 
+// TestWebSocketControlPingKeepsConnectionAlive verifies that protocol-level
+// ping frames (used by native clients such as PusherSwift instead of
+// pusher:ping) refresh the read deadline, so the connection is not closed
+// with 4400 while the client keeps pinging.
+func TestWebSocketControlPingKeepsConnectionAlive(t *testing.T) {
+	server, cancel := createTestServer(t)
+	server.config.Applications[0].ReadTimeout = 1 * time.Second
+	httpServer := createWebSocketServer(t, server)
+	conn, _, writer := createWebSocketConnection(t, httpServer.URL)
+	t.Cleanup(func() {
+		conn.Close()
+		cleanupTestServer(t, server, httpServer, cancel)
+	})
+
+	readMessage(t, conn)
+
+	// Ping for well past the 1s read timeout, only via control frames.
+	for i := 0; i < 6; i++ {
+		time.Sleep(400 * time.Millisecond)
+		require.NoError(t, ws.WriteFrame(conn, ws.MaskFrame(ws.NewPingFrame(nil))))
+
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		frame, err := ws.ReadFrame(conn)
+		require.NoError(t, err)
+		require.Equal(t, ws.OpPong, frame.Header.OpCode, "expected pong, got opcode %v", frame.Header.OpCode)
+	}
+
+	// Connection must still be alive.
+	sendMessage(t, writer, payloads.PayloadPack(constants.PusherPing, ""))
+	var payload payloads.Payload
+	require.NoError(t, json.Unmarshal(readMessage(t, conn), &payload))
+	assert.Equal(t, constants.PusherPong, payload.Event)
+}
+
 func TestWebSocketConnectionClosure(t *testing.T) {
 	server, cancel := createTestServer(t)
 	httpServer := createWebSocketServer(t, server)

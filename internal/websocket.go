@@ -489,7 +489,14 @@ func (w *WebSocket) handlePresenceChannelSubscription(channelObj *Channel, joinR
 // handleControlFrame answers ping and close frames from the client. On a close
 // frame it replies with a close frame and returns a wsutil.ClosedError.
 func (w *WebSocket) handleControlFrame(header ws.Header, r io.Reader) error {
-	return wsutil.ControlFrameHandler(controlFrameWriter{w}, ws.StateServerSide)(header, r)
+	if err := wsutil.ControlFrameHandler(controlFrameWriter{w}, ws.StateServerSide)(header, r); err != nil {
+		return err
+	}
+	// A ping or pong frame is client activity, the same as a pusher:ping
+	// message. Native clients (e.g. PusherSwift) heartbeat with protocol-level
+	// pings instead of pusher:ping, so refresh the read deadline here too.
+	w.resetReadTimeout()
+	return nil
 }
 
 // writeCloseFrame sends a websocket close frame with the given status code.
