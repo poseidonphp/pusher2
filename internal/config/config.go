@@ -47,6 +47,11 @@ type ServerConfig struct {
 	RedisUrl               string                  `mapstructure:"redis_url"`
 	RedisTls               bool                    `mapstructure:"redis_tls"`
 	RedisClusterMode       bool                    `mapstructure:"redis_cluster_mode"`
+	UsingNats              bool                    `mapstructure:"-" json:"-"`
+	NatsInstance           *clients.NatsClient     `mapstructure:"-" json:"-"`
+	NatsUrl                string                  `mapstructure:"nats_url"`
+	NatsPrefix             string                  `mapstructure:"nats_prefix"`
+	NatsTls                bool                    `mapstructure:"nats_tls"`
 	IgnoreLoggerMiddleware bool                    `mapstructure:"ignore_logger_middleware"`
 	MetricsEnabled         bool                    `mapstructure:"metrics_enabled"`
 	MetricsPort            string                  `mapstructure:"metrics_port"`
@@ -79,6 +84,9 @@ func initFlags() {
 	pflag.String("redis-prefix", "pusher", "Prefix to use for Redis keys")
 	pflag.Bool("redis-tls", false, "Use TLS for Redis connection")
 	pflag.Bool("redis-cluster", false, "Use Redis cluster mode")
+	pflag.String("nats-url", "nats://localhost:4222", "URL of the NATS server")
+	pflag.String("nats-prefix", "pusher", "Prefix to use for NATS subjects and KV bucket names")
+	pflag.Bool("nats-tls", false, "Use TLS for NATS connection")
 	pflag.String("log-level", "warn", "Log level (trace, debug, info, warn, error)")
 	pflag.Bool("ignore-logger-middleware", false, "Ignore logger middleware")
 	pflag.Bool("metrics-enabled", false, "Enable metrics collection and endpoints")
@@ -131,6 +139,9 @@ func initFlags() {
 	_ = viper.BindPFlag("redis_prefix", pflag.Lookup("redis-prefix"))
 	_ = viper.BindPFlag("redis_tls", pflag.Lookup("redis-tls"))
 	_ = viper.BindPFlag("redis_cluster", pflag.Lookup("redis-cluster"))
+	_ = viper.BindPFlag("nats_url", pflag.Lookup("nats-url"))
+	_ = viper.BindPFlag("nats_prefix", pflag.Lookup("nats-prefix"))
+	_ = viper.BindPFlag("nats_tls", pflag.Lookup("nats-tls"))
 	_ = viper.BindPFlag("log_level", pflag.Lookup("log-level"))
 	_ = viper.BindPFlag("ignore_logger_middleware", pflag.Lookup("ignore-logger-middleware"))
 	_ = viper.BindPFlag("metrics_enabled", pflag.Lookup("metrics-enabled"))
@@ -379,6 +390,23 @@ func InitializeServerConfig(_ *context.Context) (*ServerConfig, error) {
 			return nil, errors.New(fmt.Sprintf("Error initializing Redis client: %s", err.Error()))
 		}
 		cfg.RedisInstance = client
+	}
+
+	// 9b) Same as above, but for NATS (adapter and/or cache driver)
+	if cfg.ChannelCacheDriver == "nats" || cfg.AdapterDriver == "nats" {
+		cfg.UsingNats = true
+	} else {
+		cfg.UsingNats = false
+	}
+
+	if cfg.UsingNats {
+		logInstance.Info("Initializing NATS client\n")
+		natsClient := &clients.NatsClient{Prefix: cfg.NatsPrefix}
+		err := natsClient.InitNats(cfg.NatsUrl, cfg.NatsTls)
+		if err != nil {
+			return nil, errors.New(fmt.Sprintf("Error initializing NATS client: %s", err.Error()))
+		}
+		cfg.NatsInstance = natsClient
 	}
 
 	// 10) Set the logger level based on the configuration
