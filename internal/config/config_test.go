@@ -13,11 +13,8 @@ import (
 	"pusher/internal/constants"
 	"pusher/internal/util"
 
-	"github.com/spf13/viper"
-
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
-	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -32,10 +29,6 @@ func setupMiniRedis(t *testing.T) (*miniredis.Miniredis, *redis.Client) {
 	})
 
 	return mr, client
-}
-
-func resetViper() {
-	viper.Reset()
 }
 
 func setupTestEnv(t *testing.T) {
@@ -78,8 +71,6 @@ func TestFileExists(t *testing.T) {
 }
 
 func TestInitializeServerConfig_DefaultValues(t *testing.T) {
-	// Reset pflag to avoid conflicts between tests
-	pflag.CommandLine = pflag.NewFlagSet("test", pflag.ContinueOnError)
 
 	ctx := context.Background()
 	t.Setenv("APP_ID", "12345")
@@ -108,8 +99,6 @@ func TestInitializeServerConfig_DefaultValues(t *testing.T) {
 }
 
 func TestInitializeServerConfig_WithEnvironmentVariables(t *testing.T) {
-	// Reset pflag to avoid conflicts between tests
-	pflag.CommandLine = pflag.NewFlagSet("test", pflag.ContinueOnError)
 	mr, client := setupMiniRedis(t)
 	defer mr.Close()
 	defer client.Close()
@@ -149,8 +138,6 @@ func TestInitializeServerConfig_WithEnvironmentVariables(t *testing.T) {
 }
 
 func TestInitializeServerConfig_SingleAppMode(t *testing.T) {
-	// Reset pflag to avoid conflicts between tests
-	pflag.CommandLine = pflag.NewFlagSet("test", pflag.ContinueOnError)
 
 	// Set single app configuration
 	t.Setenv("APP_ID", "12345")
@@ -193,8 +180,6 @@ func TestInitializeServerConfig_SingleAppMode(t *testing.T) {
 }
 
 func TestInitializeServerConfig_WithConfigFile(t *testing.T) {
-	// Reset pflag to avoid conflicts between tests
-	pflag.CommandLine = pflag.NewFlagSet("test", pflag.ContinueOnError)
 	setupTestEnv(t)
 
 	mr, client := setupMiniRedis(t)
@@ -202,28 +187,32 @@ func TestInitializeServerConfig_WithConfigFile(t *testing.T) {
 	defer client.Close()
 
 	// Create a temporary config file
-	configContent := fmt.Sprintf(`
-app_env: "staging"
-port: "9000"
-bind_address: "0.0.0.0"
-adapter_driver: "redis"
-queue_driver: "redis"
-cache_driver: "redis"
-redis_url: "redis://%s"
-redis_prefix: "config-file-test"
-log_level: "warn"
-applications:
-  - app_id: "67890"
-    app_key: "config-key"
-    app_secret: "config-secret"
-    app_activity_timeout: 180
-    app_max_connections: 500
-    app_enable_client_messages: false
-    app_enabled: true
+	configContent := fmt.Sprintf(`{
+  "app_env": "staging",
+  "port": "9000",
+  "bind_address": "0.0.0.0",
+  "adapter_driver": "redis",
+  "queue_driver": "redis",
+  "cache_driver": "redis",
+  "redis_url": "redis://%s",
+  "redis_prefix": "config-file-test",
+  "log_level": "warn",
+  "applications": [
+    {
+      "app_id": "67890",
+      "app_key": "config-key",
+      "app_secret": "config-secret",
+      "app_activity_timeout": 180,
+      "app_max_connections": 500,
+      "app_enable_client_messages": false,
+      "app_enabled": true
+    }
+  ]
+}
 `, mr.Addr())
 
 	tempDir := t.TempDir()
-	configFile := filepath.Join(tempDir, "test-config.yaml")
+	configFile := filepath.Join(tempDir, "test-config.json")
 	err := os.WriteFile(configFile, []byte(configContent), 0644)
 	require.NoError(t, err)
 
@@ -261,9 +250,6 @@ applications:
 }
 
 func TestInitializeServerConfig_WithEnvFile(t *testing.T) {
-	// Reset pflag to avoid conflicts between tests
-	resetViper()
-	pflag.CommandLine = pflag.NewFlagSet("test", pflag.ContinueOnError)
 	setupTestEnv(t)
 
 	mr, client := setupMiniRedis(t)
@@ -323,8 +309,6 @@ APP_SECRET=env-secret
 }
 
 func TestInitializeServerConfig_RedisConfiguration(t *testing.T) {
-	// Reset pflag to avoid conflicts between tests
-	pflag.CommandLine = pflag.NewFlagSet("test", pflag.ContinueOnError)
 	mr, client := setupMiniRedis(t)
 	defer mr.Close()
 	defer client.Close()
@@ -350,8 +334,6 @@ func TestInitializeServerConfig_RedisConfiguration(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Reset pflag for each test
-			pflag.CommandLine = pflag.NewFlagSet("test", pflag.ContinueOnError)
 			setupTestEnv(t)
 
 			t.Setenv("ADAPTER_DRIVER", tc.adapterDriver)
@@ -380,8 +362,6 @@ func TestInitializeServerConfig_RedisConfiguration(t *testing.T) {
 }
 
 func TestInitializeServerConfig_InvalidConfigFile(t *testing.T) {
-	// Reset pflag to avoid conflicts between tests
-	pflag.CommandLine = pflag.NewFlagSet("test", pflag.ContinueOnError)
 
 	// Set path to non-existent config file
 	t.Setenv("CONFIG_FILE", "/path/to/nonexistent/config.yaml")
@@ -395,8 +375,6 @@ func TestInitializeServerConfig_InvalidConfigFile(t *testing.T) {
 }
 
 func TestInitializeServerConfig_MalformedConfigFile(t *testing.T) {
-	// Reset pflag to avoid conflicts between tests
-	pflag.CommandLine = pflag.NewFlagSet("test", pflag.ContinueOnError)
 
 	configContent := fmt.Sprintf(`
 xxxxxx
@@ -424,9 +402,6 @@ applications:
 }
 
 func TestInitializeServerConfig_InvalidEnvFile(t *testing.T) {
-	// Reset pflag to avoid conflicts between tests
-	resetViper()
-	pflag.CommandLine = pflag.NewFlagSet("test", pflag.ContinueOnError)
 	setupTestEnv(t)
 
 	// Set path to non-existent .env file
@@ -442,8 +417,6 @@ func TestInitializeServerConfig_InvalidEnvFile(t *testing.T) {
 }
 
 func TestInitializeServerConfig_WebhookConfiguration(t *testing.T) {
-	// Reset pflag to avoid conflicts between tests
-	pflag.CommandLine = pflag.NewFlagSet("test", pflag.ContinueOnError)
 
 	// Set webhook-related environment variables
 	t.Setenv("APP_ID", "12345")
@@ -479,8 +452,6 @@ func TestInitializeServerConfig_WebhookConfiguration(t *testing.T) {
 }
 
 func TestInitializeServerConfig_EventLimitsConfiguration(t *testing.T) {
-	// Reset pflag to avoid conflicts between tests
-	pflag.CommandLine = pflag.NewFlagSet("test", pflag.ContinueOnError)
 
 	// Set event limit environment variables
 	t.Setenv("APP_ID", "12345")
@@ -512,9 +483,6 @@ func TestInitializeServerConfig_EventLimitsConfiguration(t *testing.T) {
 }
 
 func TestInitializeServerConfig_NoApplications(t *testing.T) {
-	// Reset pflag to avoid conflicts between tests
-	resetViper()
-	pflag.CommandLine = pflag.NewFlagSet("test", pflag.ContinueOnError)
 
 	setupTestEnv(t)
 	_ = os.Unsetenv("APP_ID")
@@ -534,8 +502,6 @@ func TestInitializeServerConfig_NoApplications(t *testing.T) {
 }
 
 func TestInitializeServerConfig_ProductionEnvironment(t *testing.T) {
-	// Reset pflag to avoid conflicts between tests
-	pflag.CommandLine = pflag.NewFlagSet("test", pflag.ContinueOnError)
 
 	setupTestEnv(t)
 
@@ -597,4 +563,36 @@ func TestServerConfig_Structure(t *testing.T) {
 	assert.False(t, config.RedisClusterMode)
 	assert.True(t, config.IgnoreLoggerMiddleware)
 	assert.False(t, config.UsingRedis)
+}
+
+func TestLoadServerConfig_CommandLineArgs(t *testing.T) {
+	setupTestEnv(t)
+	t.Setenv("LOG_LEVEL", "error")
+
+	config, err := loadServerConfig([]string{
+		"-p", "7001",
+		"--log-level=debug",
+		"--redis-cluster",
+		"-a", "local",
+		"--app-max-connections", "25",
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, "7001", config.Port)
+	assert.Equal(t, "debug", config.LogLevel, "explicit flag beats env var")
+	assert.True(t, config.RedisClusterMode)
+	assert.Equal(t, "local", config.AdapterDriver)
+	require.Len(t, config.Applications, 1)
+	assert.Equal(t, int64(25), config.Applications[0].MaxConnections)
+}
+
+func TestLoadServerConfig_InvalidInput(t *testing.T) {
+	setupTestEnv(t)
+
+	_, err := loadServerConfig([]string{"--no-such-flag"})
+	assert.ErrorContains(t, err, "error parsing flags")
+
+	t.Setenv("APP_MAX_CONNECTIONS", "lots")
+	_, err = loadServerConfig(nil)
+	assert.ErrorContains(t, err, "app_max_connections")
 }

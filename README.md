@@ -89,7 +89,7 @@ The configuration file should be in JSON format and can be specified with the `-
     "redis_url": "localhost:6379",
     "redis_prefix": "pusher",
     "redis_tls": false,
-    "redis_cluster_mode": false
+    "redis_cluster": false
   },
   "applications": [
     {

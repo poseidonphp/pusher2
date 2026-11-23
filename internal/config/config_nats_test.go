@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/nats-io/nats-server/v2/server"
-	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -37,7 +36,6 @@ func setupTestNatsServer(t *testing.T) *server.Server {
 }
 
 func TestInitializeServerConfig_NatsConfiguration(t *testing.T) {
-	pflag.CommandLine = pflag.NewFlagSet("test", pflag.ContinueOnError)
 	ns := setupTestNatsServer(t)
 
 	testCases := []struct {
@@ -54,7 +52,6 @@ func TestInitializeServerConfig_NatsConfiguration(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			pflag.CommandLine = pflag.NewFlagSet("test", pflag.ContinueOnError)
 			setupTestEnv(t)
 
 			t.Setenv("ADAPTER_DRIVER", tc.adapterDriver)
@@ -81,7 +78,6 @@ func TestInitializeServerConfig_NatsConfiguration(t *testing.T) {
 }
 
 func TestInitializeServerConfig_NatsConfiguration_BadHost(t *testing.T) {
-	pflag.CommandLine = pflag.NewFlagSet("test", pflag.ContinueOnError)
 	setupTestEnv(t)
 
 	t.Setenv("ADAPTER_DRIVER", "nats")
