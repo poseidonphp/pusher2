@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"maps"
 	"slices"
 	"sync"
 	"time"
@@ -30,8 +31,11 @@ type Namespace struct {
 
 // GetSockets returns all WebSocket connections in this namespace.
 // This provides access to all connected sockets for the app.
+// It returns a copy, so callers can iterate while sockets remove themselves.
 func (n *Namespace) GetSockets() map[constants.SocketID]*WebSocket {
-	return n.Sockets
+	n.mutex.Lock()
+	defer n.mutex.Unlock()
+	return maps.Clone(n.Sockets)
 }
 
 // GetChannels returns all channels and their subscribed socket IDs in this namespace.

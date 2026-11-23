@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -31,7 +32,7 @@ type Server struct {
 	QueueManager      queues.QueueInterface
 	WebhookSender     *webhooks.WebhookSender
 	Logger            logger.LoggingInterface
-	Closing           bool
+	Closing           atomic.Bool // set on shutdown, read by request handlers
 	// websocketPool  sync.Pool
 }
 
@@ -278,6 +279,14 @@ func loadAdapter(ctx context.Context, conf *config.ServerConfig, metricsManager 
 		if err != nil {
 			return nil, err
 		}
+	case "nats":
+		if conf.NatsInstance == nil {
+			return nil, errors.New("nats instance not configured")
+		}
+		adapter, err = NewNatsAdapter(ctx, conf.NatsInstance.Conn, conf.NatsPrefix, "int", metricsManager)
+		if err != nil {
+			return nil, err
+		}
 	case "local":
 		adapter = NewLocalAdapter(metricsManager)
 		err = adapter.Init()
@@ -338,6 +347,14 @@ func loadCacheManager(ctx context.Context, conf *config.ServerConfig) (cache.Cac
 			Client: conf.RedisInstance.Client,
 			Prefix: conf.RedisPrefix,
 		}
+	case "nats":
+		if conf.NatsInstance == nil {
+			return nil, errors.New("nats instance not configured")
+		}
+		cacheManager = &cache.NatsCache{
+			Client: conf.NatsInstance.JS,
+			Prefix: conf.NatsPrefix,
+		}
 	default:
 		cacheManager = &cache.LocalCache{}
 	}
@@ -354,7 +371,7 @@ func loadCacheManager(ctx context.Context, conf *config.ServerConfig) (cache.Cac
 func handlePanic(server *Server) {
 	if r := recover(); r != nil {
 		server.Logger.Error("Recovered from panic", r)
-		server.Closing = true
+		server.Closing.Store(true)
 		attemptGracefulShutdown(nil, nil, server, func() {})
 	}
 }
@@ -367,7 +384,7 @@ func attemptGracefulShutdown(webServer *http.Server, metricsServer *http.Server,
 	defer ctxCancel()
 
 	var wg sync.WaitGroup
-	server.Closing = true
+	server.Closing.Store(true)
 
 	// Shutdown the HTTP server
 

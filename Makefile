@@ -20,6 +20,15 @@ run-cli:
 	go run cmd/main.go --adapter-driver=redis --cache-driver=redis
 
 
+.PHONY run-ext-nats:
+run-ext-nats:
+	go run cmd/main.go --adapter-driver=nats --cache-driver=nats --metrics-enabled
+
+.PHONY run-ext-nats2:
+run-ext-nats2:
+	go run cmd/main.go --adapter-driver=nats --cache-driver=nats --port=6002
+
+
 
 .PHONY run-alt:
 run-alt:

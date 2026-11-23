@@ -41,7 +41,6 @@ func createTestWebSocketForRedis(id constants.SocketID, userID string) *WebSocke
 		userID:             userID,
 		PresenceData:       make(map[constants.ChannelName]*pusherClient.MemberData),
 		SubscribedChannels: make(map[constants.ChannelName]*Channel),
-		closed:             false,
 		conn:               nil,
 	}
 }

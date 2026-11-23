@@ -552,7 +552,6 @@ func TestLoadCacheManager(t *testing.T) {
 func TestHandlePanic(t *testing.T) {
 	t.Run("no panic", func(t *testing.T) {
 		server := &Server{
-			Closing: false,
 			Adapter: &ServerTestMockAdapter{},
 		}
 
@@ -563,7 +562,7 @@ func TestHandlePanic(t *testing.T) {
 		}()
 
 		// Server should still be in original state
-		assert.False(t, server.Closing)
+		assert.False(t, server.Closing.Load())
 	})
 
 	t.Run("panic recovery", func(t *testing.T) {
@@ -571,7 +570,6 @@ func TestHandlePanic(t *testing.T) {
 		// Note: This will call os.Exit(1) so we can't test the full flow
 		// But we can test that the function exists and can be called
 		server := &Server{
-			Closing: false,
 			Adapter: &ServerTestMockAdapter{},
 		}
 		assert.NotPanics(t, func() {
@@ -582,7 +580,6 @@ func TestHandlePanic(t *testing.T) {
 	t.Run("panic with different types", func(t *testing.T) {
 		// Test that the function exists and can be referenced
 		server := &Server{
-			Closing: false,
 			Adapter: &ServerTestMockAdapter{},
 		}
 		assert.NotPanics(t, func() {
@@ -773,7 +770,7 @@ func TestServerLifecycleIntegration(t *testing.T) {
 		}
 
 		// Step 5: Graceful shutdown
-		server.Closing = true
+		server.Closing.Store(true)
 		server.CloseAllLocalSockets()
 
 		// Shutdown web server
@@ -816,7 +813,6 @@ func TestServerConcurrency(t *testing.T) {
 	t.Run("concurrent server state changes", func(t *testing.T) {
 		server := &Server{
 			Adapter: &ServerTestMockAdapter{},
-			Closing: false,
 			Logger:  logger.NewAppLogger(),
 		}
 
@@ -825,7 +821,7 @@ func TestServerConcurrency(t *testing.T) {
 
 		for range numGoroutines {
 			wg.Go(func() {
-				server.Closing = true
+				server.Closing.Store(true)
 				server.CloseAllLocalSockets()
 			})
 		}

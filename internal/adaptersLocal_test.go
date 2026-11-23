@@ -32,7 +32,6 @@ func createTestWebSocketForAdapter(id constants.SocketID, userID string) *WebSoc
 		userID:             userID,
 		PresenceData:       make(map[constants.ChannelName]*pusherClient.MemberData),
 		SubscribedChannels: make(map[constants.ChannelName]*Channel),
-		closed:             false,
 		conn:               nil,
 	}
 }
