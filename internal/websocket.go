@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"pusher/internal/apps"
@@ -28,8 +29,8 @@ type WebSocket struct {
 	app                *apps.App
 	SubscribedChannels map[constants.ChannelName]*Channel
 	PresenceData       map[constants.ChannelName]*pusherClient.MemberData
-	conn               net.Conn
-	closed             bool
+	conn               net.Conn    // set once in createWebSocket; never reassigned
+	closed             atomic.Bool // read from the listener, auth watcher, and senders
 	mutex              sync.Mutex
 	sendMutex          sync.Mutex
 	server             *Server
@@ -68,7 +69,7 @@ type AuthDataUserData struct {
 // Send transmits a message to the connected client
 // It handles write timeouts and connection closure on failure
 func (w *WebSocket) Send(msg []byte) {
-	if w.closed || w.conn == nil {
+	if w.closed.Load() || w.conn == nil {
 		log.Logger().Debug("connection is closed or nil")
 		return
 	}
@@ -81,11 +82,11 @@ func (w *WebSocket) Send(msg []byte) {
 
 	// Write a text frame
 	if _, err := w.connWriter.Write(msg); err != nil {
-		w.closed = true
+		w.closed.Store(true)
 		return
 	}
 	if err := w.connWriter.Flush(); err != nil {
-		w.closed = true
+		w.closed.Store(true)
 		return
 	}
 
@@ -146,7 +147,7 @@ func (w *WebSocket) Listen() {
 	w.tracef("starting reader")
 
 	for {
-		if w.closed || w.conn == nil {
+		if w.closed.Load() || w.conn == nil {
 			w.tracef("connection is closed or nil")
 			return
 		}
@@ -216,7 +217,8 @@ func (w *WebSocket) WatchForAuthentication() {
 		return
 	}
 
-	w.userAuthChannel = make(chan bool, 1)
+	authChannel := make(chan bool, 1)
+	w.userAuthChannel = authChannel
 	timeout := w.app.AuthorizationTimeout
 	w.mutex.Unlock()
 
@@ -228,7 +230,7 @@ func (w *WebSocket) WatchForAuthentication() {
 		defer timer.Stop()
 
 		select {
-		case authResult, ok := <-w.userAuthChannel:
+		case authResult, ok := <-authChannel:
 			if ok {
 				w.mutex.Lock()
 				w.userHasAuthorized = authResult
@@ -251,7 +253,8 @@ func (w *WebSocket) WatchForAuthentication() {
 	}()
 }
 
-// Cleanup performs cleanup operations when the WebSocket is closed
+// Cleanup performs cleanup operations when the WebSocket is closed.
+// The caller must hold w.mutex.
 func (w *WebSocket) Cleanup() {
 	// Close any remaining channels
 	if w.userAuthChannel != nil {
@@ -266,9 +269,7 @@ func (w *WebSocket) Cleanup() {
 	// Any other cleanup needed. app and server are shared, long-lived objects;
 	// they are kept so goroutines still finishing (Listen, the auth watcher)
 	// never dereference nil.
-	w.ID = ""
-	w.conn = nil
-	w.closed = true
+	w.closed.Store(true)
 	w.userID = ""
 	w.userHasAuthorized = false
 }
@@ -308,13 +309,11 @@ func (w *WebSocket) closeConnection(code util.ErrorCode) {
 		if err := w.conn.Close(); err != nil {
 			w.errorf("Error closing connection: %s", err)
 		}
-		w.conn = nil
 	}
 
-	if w.closed {
+	if w.closed.Swap(true) {
 		return
 	}
-	w.closed = true
 	w.Cleanup()
 }
 
@@ -554,7 +553,7 @@ func (w *WebSocket) handleReadMessageError(err error) {
 	// closeConnection blocks here until it finishes, so a read that failed because
 	// the server closed the socket sees closed == true and stops.
 	w.mutex.Lock()
-	if w.closed {
+	if w.closed.Load() {
 		w.mutex.Unlock()
 		return
 	}
@@ -594,7 +593,7 @@ func (w *WebSocket) handleReadMessageError(err error) {
 // entry point for all channel subscription logic.
 func (w *WebSocket) handleSubscribeRequest(msgRaw []byte) *util.Error {
 	w.tracef("Handling subscribe request")
-	if w.server.Closing {
+	if w.server.Closing.Load() {
 		return util.NewError(util.ErrCodeGenericReconnect)
 	}
 

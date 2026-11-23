@@ -218,7 +218,7 @@ func TestServerCreation(t *testing.T) {
 		}
 
 		assert.NotNil(t, server)
-		assert.False(t, server.Closing)
+		assert.False(t, server.Closing.Load())
 	})
 }
 
@@ -527,7 +527,7 @@ func (h *TestServerHelper) StopWebServer() error {
 // Cleanup cleans up resources
 func (h *TestServerHelper) Cleanup() {
 	h.cancel()
-	h.server.Closing = true
+	h.server.Closing.Store(true)
 	h.server.CloseAllLocalSockets()
 	h.wg.Wait()
 }

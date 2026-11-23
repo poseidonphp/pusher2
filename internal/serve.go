@@ -60,7 +60,7 @@ func newRouter(server *Server) *http.ServeMux {
 	mux.Handle("POST /apps/{app_id}/users/{user_id}/terminate_connections", backend(TerminateUserConnections))
 
 	mux.HandleFunc("GET /app/{key}", func(w http.ResponseWriter, r *http.Request) {
-		if server.Closing {
+		if server.Closing.Load() {
 			writeError(w, http.StatusServiceUnavailable, "Server is not accepting connections")
 			return
 		}
@@ -82,7 +82,7 @@ func newRouter(server *Server) *http.ServeMux {
 //
 // When it's done, it adds the socket to the server's adapter and starts listening for messages.
 func serveWs(server *Server, w http.ResponseWriter, r *http.Request, appKey, client, version, protocolStr string) {
-	if server.Closing {
+	if server.Closing.Load() {
 		log.Logger().Error("Server is not accepting connections")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
@@ -180,7 +180,6 @@ func createWebSocket(socketID constants.SocketID, conn net.Conn, server *Server,
 	socket := &WebSocket{
 		ID:                 socketID,
 		conn:               conn,
-		closed:             false,
 		server:             server,
 		app:                app,
 		SubscribedChannels: make(map[constants.ChannelName]*Channel),

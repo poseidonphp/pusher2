@@ -177,9 +177,7 @@ func TestLoadCacheManagerBasic(t *testing.T) {
 // TestHandlePanicBasic tests the handlePanic function
 func TestHandlePanicBasic(t *testing.T) {
 	t.Run("no panic", func(t *testing.T) {
-		server := &Server{
-			Closing: false,
-		}
+		server := &Server{}
 
 		// Test that handlePanic doesn't do anything when there's no panic
 		func() {
@@ -188,7 +186,7 @@ func TestHandlePanicBasic(t *testing.T) {
 		}()
 
 		// Server should still be in original state
-		assert.False(t, server.Closing)
+		assert.False(t, server.Closing.Load())
 	})
 
 	t.Run("panic recovery", func(t *testing.T) {

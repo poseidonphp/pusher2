@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -31,7 +32,7 @@ type Server struct {
 	QueueManager      queues.QueueInterface
 	WebhookSender     *webhooks.WebhookSender
 	Logger            logger.LoggingInterface
-	Closing           bool
+	Closing           atomic.Bool // set on shutdown, read by request handlers
 	// websocketPool  sync.Pool
 }
 
@@ -370,7 +371,7 @@ func loadCacheManager(ctx context.Context, conf *config.ServerConfig) (cache.Cac
 func handlePanic(server *Server) {
 	if r := recover(); r != nil {
 		server.Logger.Error("Recovered from panic", r)
-		server.Closing = true
+		server.Closing.Store(true)
 		attemptGracefulShutdown(nil, nil, server, func() {})
 	}
 }
@@ -383,7 +384,7 @@ func attemptGracefulShutdown(webServer *http.Server, metricsServer *http.Server,
 	defer ctxCancel()
 
 	var wg sync.WaitGroup
-	server.Closing = true
+	server.Closing.Store(true)
 
 	// Shutdown the HTTP server
 

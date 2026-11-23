@@ -196,7 +196,6 @@ func createTestServerForServe() *Server {
 		Adapter:        adapter,
 		MetricsManager: metricsManager,
 		Logger:         logger.NewAppLogger(),
-		Closing:        false,
 	}
 }
 
@@ -386,7 +385,7 @@ func TestCreateWebSocket(t *testing.T) {
 		assert.Equal(t, conn, ws.conn)
 		assert.Equal(t, server, ws.server)
 		assert.Equal(t, testApp, ws.app)
-		assert.False(t, ws.closed)
+		assert.False(t, ws.closed.Load())
 		assert.NotNil(t, ws.SubscribedChannels)
 		assert.NotNil(t, ws.PresenceData)
 	})
@@ -524,7 +523,7 @@ func TestCloseConnectionWithError(t *testing.T) {
 func TestServeWs(t *testing.T) {
 	t.Run("ServerClosing", func(t *testing.T) {
 		server := createTestServerForServe()
-		server.Closing = true
+		server.Closing.Store(true)
 
 		w := httptest.NewRecorder()
 		req := createWebSocketUpgradeRequest("/app/test-key")
@@ -674,7 +673,9 @@ func TestServeWs_Integration(t *testing.T) {
 		}
 
 		// Create a real HTTP server that can handle WebSocket upgrades
+		handlerDone := make(chan struct{})
 		httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer close(handlerDone)
 			serveWs(server, w, r, "test-key", "test-client", "1.0", "7")
 		}))
 		defer httpServer.Close()
@@ -689,6 +690,14 @@ func TestServeWs_Integration(t *testing.T) {
 			t.Logf("WebSocket connection failed as expected in test environment: %v", err)
 		} else {
 			conn.Close()
+		}
+
+		// Dial returns once the handshake is done; serveWs keeps running on the
+		// server goroutine, so wait for it before checking the adapter.
+		select {
+		case <-handlerDone:
+		case <-time.After(5 * time.Second):
+			t.Fatal("serveWs did not return")
 		}
 
 		// Verify that the socket was added to the adapter
@@ -710,7 +719,9 @@ func TestServeWs_Integration(t *testing.T) {
 		}
 
 		// Create a real HTTP server that can handle WebSocket upgrades
+		handlerDone := make(chan struct{})
 		httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer close(handlerDone)
 			serveWs(server, w, r, "test-key", "test-client", "1.0", "7")
 		}))
 		defer httpServer.Close()
@@ -725,6 +736,14 @@ func TestServeWs_Integration(t *testing.T) {
 			t.Logf("WebSocket connection failed as expected in test environment: %v", err)
 		} else {
 			conn.Close()
+		}
+
+		// Dial returns once the handshake is done; serveWs keeps running on the
+		// server goroutine, so wait for it before checking the adapter.
+		select {
+		case <-handlerDone:
+		case <-time.After(5 * time.Second):
+			t.Fatal("serveWs did not return")
 		}
 
 		// Verify that the socket was added to the adapter
