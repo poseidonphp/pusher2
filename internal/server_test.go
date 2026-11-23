@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spf13/pflag"
 	"pusher/internal/apps"
 	"pusher/internal/clients"
 	"pusher/internal/config"
@@ -243,14 +242,12 @@ func TestNewServer(t *testing.T) {
 // TestRun tests the Run function
 func TestRun(t *testing.T) {
 	t.Run("Run with nil context", func(t *testing.T) {
-		pflag.CommandLine = pflag.NewFlagSet("test", pflag.ContinueOnError)
 		err := Run(nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "parent context is nil")
 	})
 
 	t.Run("Run with valid context but missing config", func(t *testing.T) {
-		pflag.CommandLine = pflag.NewFlagSet("test", pflag.ContinueOnError)
 		// This will fail due to missing config, but we can test the function exists
 		ctx := context.Background()
 		err := Run(ctx)
@@ -259,7 +256,6 @@ func TestRun(t *testing.T) {
 	})
 
 	t.Run("Run function exists and is callable", func(t *testing.T) {
-		pflag.CommandLine = pflag.NewFlagSet("test", pflag.ContinueOnError)
 		// Test that the Run function exists and can be called
 		ctx := context.Background()
 		err := Run(ctx)
